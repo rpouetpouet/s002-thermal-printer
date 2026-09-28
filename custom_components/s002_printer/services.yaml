@@ -24,7 +24,8 @@ print_text:
   fields:
     text:
       name: Texte
-      description: Une ligne par ligne imprimée.
+      description: Une ligne par ligne imprimée. Les lignes vides sont conservées (séparateurs)
+        et le texte trop large est replié automatiquement.
       required: true
       example: "Liste de courses\nLait\nPain"
       selector:
@@ -39,6 +40,16 @@ print_text:
           min: 1
           max: 6
           mode: box
+    margin_dots:
+      name: Marge gauche/droite (points)
+      description: Marge symétrique en points (16 ≈ 1,35 mm de chaque côté).
+      default: 16
+      selector:
+        number:
+          min: 0
+          max: 200
+          mode: box
+          unit_of_measurement: points
     address:
       name: Adresse
       description: Adresse MAC de l'imprimante (facultatif si une seule est configurée).

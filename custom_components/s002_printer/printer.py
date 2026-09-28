@@ -208,9 +208,25 @@ class S002Printer:
             )
             return resultat
 
-    async def print_text(self, lines: list[str], scale: int = 2, dry_run: bool = False) -> PrintResult:
-        """Imprime des lignes de texte (police bitmap de Pillow : aucune fonte à embarquer)."""
-        return await self.print_raster(yk.text_raster(lines, scale=scale), dry_run=dry_run)
+    async def print_text(
+        self,
+        lines: list[str],
+        scale: int = 2,
+        margin_dots: int = 16,
+        dry_run: bool = False,
+    ) -> PrintResult:
+        """Imprime des lignes de texte (police bitmap de Pillow : aucune fonte à embarquer).
+
+        `margin_dots` : marge symétrique gauche/droite en points. Par défaut 16 points
+        (≈ 1,35 mm), c'est-à-dire des marges visuellement symétriques ; l'ancienne valeur
+        de 8 ne laissait qu'une marge gauche et « décalait » le bloc (constaté à l'impression).
+        Le texte trop large est replié automatiquement (`yk.text_raster`), il n'est donc plus
+        tronqué en silence.
+        """
+        return await self.print_raster(
+            yk.text_raster(lines, scale=scale, padding_dots=max(0, int(margin_dots))),
+            dry_run=dry_run,
+        )
 
     async def print_test_pattern(self, dry_run: bool = False) -> PrintResult:
         """Impression du motif de validation (repères de début/fin + 6 bandes distinctes)."""

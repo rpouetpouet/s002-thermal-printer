@@ -179,11 +179,17 @@ def text_raster(
     scale: int = 2,
     padding_dots: int = 8,
     invert: bool = False,
+    wrap: bool = True,
 ) -> bytes:
     """Rasterise du texte en 1 bit (1 = noir).
 
     Utilise la police bitmap par défaut de Pillow : disponible partout, aucune fonte à
-    embarquer. `scale` multiplie la taille par un entier (rendu net, pas d'interpolation).
+    embarquer — MAIS elle ne contient PAS les caractères accentués (ils sortent en carré
+    vide : vérifié). `scale` multiplie la taille par un entier (rendu net, pas
+    d'interpolation).
+
+    `wrap=True` replie les lignes trop larges sur les espaces : sans cela, le texte qui
+    dépasse la largeur d'impression est **tronqué en silence** (défaut constaté).
     """
     from PIL import Image, ImageDraw, ImageFont  # import tardif : Pillow n'est requis qu'ici
 
@@ -191,6 +197,25 @@ def text_raster(
     probe = Image.new("1", (PRINT_WIDTH_DOTS, 8), 1)
     probe_draw = ImageDraw.Draw(probe)
     line_height = max(1, probe_draw.textbbox((0, 0), "Ag", font=font)[3]) + 4
+
+    largeur_utile = max(8, PRINT_WIDTH_DOTS - 2 * padding_dots)
+    if wrap:
+        repliees: list[str] = []
+        for brute in lines:
+            if not brute.strip() or probe_draw.textlength(brute, font=font) <= largeur_utile:
+                repliees.append(brute)
+                continue
+            courant = ""
+            for mot in brute.split():
+                essai = f"{courant} {mot}".strip()
+                if courant and probe_draw.textlength(essai, font=font) > largeur_utile:
+                    repliees.append(courant)
+                    courant = mot
+                else:
+                    courant = essai
+            repliees.append(courant)
+        lines = repliees
+
     height = padding_dots * 2 + line_height * max(1, len(lines))
 
     img = Image.new("1", (PRINT_WIDTH_DOTS, height), 1)   # 1 = blanc dans Pillow

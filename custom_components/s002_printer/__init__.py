@@ -55,6 +55,10 @@ PRINT_TEXT_SCHEMA = SERVICE_BASE_SCHEMA.extend(
     {
         vol.Required("text"): cv.string,
         vol.Optional("scale", default=2): vol.All(vol.Coerce(int), vol.Range(min=1, max=6)),
+        # Marge symétrique gauche/droite, en points (16 ≈ 1,35 mm).
+        vol.Optional("margin_dots", default=16): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=200)
+        ),
     }
 )
 
@@ -156,9 +160,19 @@ def _async_register_services(hass: HomeAssistant) -> None:
         return resultat.as_dict()
 
     async def _print_text(call: ServiceCall) -> dict:
-        lignes = [ligne for ligne in call.data["text"].splitlines() if ligne.strip()]
+        # On CONSERVE les lignes vides : elles servent de séparateurs de mise en page
+        # (les supprimer collait les paragraphes — défaut constaté). On retire seulement
+        # les vides de tête et de queue, qui gaspillent du papier.
+        lignes = call.data["text"].splitlines()
+        while lignes and not lignes[0].strip():
+            lignes.pop(0)
+        while lignes and not lignes[-1].strip():
+            lignes.pop()
         resultat = await _resoudre(hass, call).print_text(
-            lignes, scale=call.data.get("scale", 2), dry_run=call.data.get("dry_run", False)
+            lignes,
+            scale=call.data.get("scale", 2),
+            margin_dots=call.data.get("margin_dots", 16),
+            dry_run=call.data.get("dry_run", False),
         )
         return resultat.as_dict()
 
