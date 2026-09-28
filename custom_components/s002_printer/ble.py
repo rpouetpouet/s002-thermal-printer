@@ -89,6 +89,11 @@ class WriteStats:
     # « rien n'a été imprimé » reste inexplicable alors que le transport a réussi.
     state_payloads: list[str] = field(default_factory=list)
     battery_pct: int | None = None
+    # DÉCOMPOSITION DU TEMPS — la question centrale : la lenteur vient-elle du lien
+    # (temps d'écriture) ou de NOS attentes (silences) ? Le silence total est ce que
+    # l'imprimante voit et ce qui la fait refermer sa tâche.
+    idle_ms: list[float] = field(default_factory=list)          # silence entre deux écritures
+    credit_wait_ms: list[float] = field(default_factory=list)   # attente de crédit de flux
 
     def as_dict(self) -> dict:
         total = sum(self.frame_ms)
@@ -118,6 +123,15 @@ class WriteStats:
             "max_frame_lines": max(self.frame_lines) if self.frame_lines else None,
             "state_payloads": self.state_payloads[-4:],
             "battery_pct": self.battery_pct,
+            "avg_idle_ms": round(sum(self.idle_ms) / len(self.idle_ms), 1) if self.idle_ms else 0.0,
+            "max_idle_ms": round(max(self.idle_ms), 1) if self.idle_ms else 0.0,
+            "avg_credit_wait_ms": (
+                round(sum(self.credit_wait_ms) / len(self.credit_wait_ms), 1)
+                if self.credit_wait_ms else 0.0
+            ),
+            "max_credit_wait_ms": (
+                round(max(self.credit_wait_ms), 1) if self.credit_wait_ms else 0.0
+            ),
         }
 
 
@@ -146,6 +160,7 @@ class S002Transport:
         self._credits = 0
         self._credit_event = asyncio.Event()
         self._flux_abandonne = False
+        self._ecriture_precedente: float | None = None
 
     # ------------------------------------------------------------------ connexion
     async def connect(self) -> None:
@@ -310,7 +325,11 @@ class S002Transport:
     # ------------------------------------------------------------------ écriture
     async def _write_chunk(self, morceau: bytes) -> None:
         assert self._client is not None and self._write_char is not None
-        debut = time.monotonic()
+        maintenant = time.monotonic()
+        if self._ecriture_precedente is not None:
+            self.stats.idle_ms.append((maintenant - self._ecriture_precedente) * 1000)
+        self._ecriture_precedente = maintenant
+        debut = maintenant
         # Écriture AVEC réponse par défaut : en `response=False` l'imprimante reçoit les
         # octets mais n'imprime rien (vécu). Cf. l'en-tête du module.
         await self._client.write_gatt_char(
@@ -319,6 +338,7 @@ class S002Transport:
         self.stats.chunk_ms.append((time.monotonic() - debut) * 1000)
         self.stats.chunks += 1
         self.stats.bytes_written += len(morceau)
+        self._ecriture_precedente = time.monotonic()
 
     async def write_frame(self, trame: bytes, chunk_size: int | None = None) -> float:
         """Écrit une trame complète en respectant (si possible) le contrôle de flux."""
@@ -331,12 +351,15 @@ class S002Transport:
                 continue
             self._credit_event.clear()
             avant = self._credits
+            debut_attente = time.monotonic()
             try:
                 await asyncio.wait_for(
                     self._attendre_credit(avant), timeout=FLOW_TIMEOUT_MS / 1000
                 )
                 self.stats.flow_waits += 1
+                self.stats.credit_wait_ms.append((time.monotonic() - debut_attente) * 1000)
             except asyncio.TimeoutError:
+                self.stats.credit_wait_ms.append((time.monotonic() - debut_attente) * 1000)
                 self.stats.flow_timeout += 1
                 if self.stats.flow_timeout >= FLOW_ABANDON_APRES:
                     self._flux_abandonne = True

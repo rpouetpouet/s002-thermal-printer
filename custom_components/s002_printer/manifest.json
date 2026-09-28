@@ -1,7 +1,7 @@
 {
   "domain": "s002_printer",
   "name": "ORGSTA S002 Thermal Printer",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "documentation": "https://github.com/rpouetpouet/s002-thermal-printer",
   "issue_tracker": "https://github.com/rpouetpouet/s002-thermal-printer/issues",
   "codeowners": [
