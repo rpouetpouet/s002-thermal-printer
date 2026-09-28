@@ -29,6 +29,9 @@ from .const import (
     DEFAULT_LINES_PER_FRAME,
     DEFAULT_WRITE_RESPONSE,
     DOMAIN,
+    FRAME_BUDGET_MS,
+    MAX_FRAME_BUDGET_MS,
+    MIN_FRAME_BUDGET_MS,
     MAX_LINES_PER_FRAME,
 )
 from .printer import S002Printer
@@ -93,6 +96,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         write_response=options.get(CONF_WRITE_RESPONSE, DEFAULT_WRITE_RESPONSE),
         frame_pause_ms=options.get(CONF_FRAME_PAUSE_MS, DEFAULT_FRAME_PAUSE_MS),
         lines_per_frame=options.get("lines_per_frame", DEFAULT_LINES_PER_FRAME),
+        # Budget de durée par trame : la valeur BASSE protège des blancs (trames
+        # courtes), la valeur HAUTE fait tourner le moteur en continu (espacement
+        # régulier) — c'est l'arbitrage mesuré sur ce matériel.
+        frame_budget_ms=options.get("frame_budget_ms", FRAME_BUDGET_MS),
         feed_before_mm=options.get(CONF_FEED_BEFORE_MM, 0.0),
         feed_after_mm=options.get(CONF_FEED_AFTER_MM, 0.0),
     )

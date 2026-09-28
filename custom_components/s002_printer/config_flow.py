@@ -37,6 +37,9 @@ from .const import (
     DEFAULT_FRAME_PAUSE_MS,
     DEFAULT_LINES_PER_FRAME,
     DEFAULT_WRITE_RESPONSE,
+    FRAME_BUDGET_MS,
+    MAX_FRAME_BUDGET_MS,
+    MIN_FRAME_BUDGET_MS,
     DOMAIN,
     MAX_LINES_PER_FRAME,
 )
@@ -61,6 +64,14 @@ SEL_PAUSE = selector.NumberSelector(
         unit_of_measurement="ms",
     )
 )
+# Budget de durée visé pour une trame : bas = trames courtes (anti-blancs),
+# haut = trames longues (moteur continu, espacement régulier).
+SEL_BUDGET = selector.NumberSelector(
+    selector.NumberSelectorConfig(
+        min=MIN_FRAME_BUDGET_MS, max=MAX_FRAME_BUDGET_MS, step=50,
+        mode=selector.NumberSelectorMode.BOX, unit_of_measurement="ms",
+    )
+)
 SEL_DISTANCE = selector.NumberSelector(
     selector.NumberSelectorConfig(
         min=0, max=100, step=0.5, mode=selector.NumberSelectorMode.BOX,
@@ -80,6 +91,10 @@ def _schema_options(defauts: dict[str, Any]) -> vol.Schema:
                 "lines_per_frame",
                 default=defauts.get("lines_per_frame", DEFAULT_LINES_PER_FRAME),
             ): SEL_LIGNES,
+            vol.Optional(
+                "frame_budget_ms",
+                default=defauts.get("frame_budget_ms", FRAME_BUDGET_MS),
+            ): SEL_BUDGET,
             vol.Optional(
                 CONF_FRAME_PAUSE_MS,
                 default=defauts.get(CONF_FRAME_PAUSE_MS, DEFAULT_FRAME_PAUSE_MS),
