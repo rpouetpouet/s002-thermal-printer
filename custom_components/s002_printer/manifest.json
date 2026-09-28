@@ -1,0 +1,30 @@
+{
+  "domain": "s002_printer",
+  "name": "ORGSTA S002 Thermal Printer",
+  "version": "0.1.0",
+  "documentation": "https://github.com/rpouetpouet/s002-thermal-printer",
+  "issue_tracker": "https://github.com/rpouetpouet/s002-thermal-printer/issues",
+  "codeowners": [
+    "@rpouetpouet"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "bluetooth"
+  ],
+  "requirements": [
+    "bleak-retry-connector>=3.5.0"
+  ],
+  "bluetooth": [
+    {
+      "local_name": "S002"
+    },
+    {
+      "service_uuid": "0000ff00-0000-1000-8000-00805f9b34fb"
+    }
+  ],
+  "iot_class": "local_polling",
+  "integration_type": "device",
+  "loggers": [
+    "custom_components.s002_printer"
+  ]
+}

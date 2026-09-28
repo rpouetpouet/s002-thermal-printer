@@ -1,0 +1,93 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Imprimante ORGSTA S002",
+        "description": "Adresse MAC de l'imprimante (format 06:03:DD:EC:16:4D) et réglages de transport.",
+        "data": {
+          "address": "Adresse MAC",
+          "name": "Nom affiché",
+          "chunk_size": "Taille des paquets BLE (octets)",
+          "lines_per_frame": "Lignes par trame d'image",
+          "frame_pause_ms": "Pause entre trames (ms)",
+          "feed_before_mm": "Avance avant impression (mm)",
+          "feed_after_mm": "Avance après impression (mm)"
+        }
+      }
+    },
+    "error": {
+      "invalid_address": "Adresse MAC invalide (attendu AA:BB:CC:DD:EE:FF)"
+    },
+    "abort": {
+      "already_configured": "Cette imprimante est déjà configurée"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Réglages du transport",
+        "description": "À ajuster si l'impression passe par un proxy BLE : réduire la taille des paquets et les lignes par trame augmente la fiabilité.",
+        "data": {
+          "chunk_size": "Taille des paquets BLE (octets)",
+          "lines_per_frame": "Lignes par trame d'image",
+          "frame_pause_ms": "Pause entre trames (ms)",
+          "feed_before_mm": "Avance avant impression (mm)",
+          "feed_after_mm": "Avance après impression (mm)"
+        }
+      }
+    }
+  },
+  "services": {
+    "print_test": {
+      "name": "Impression de test",
+      "description": "Imprime le motif de validation.",
+      "fields": {
+        "address": {
+          "name": "Adresse"
+        },
+        "dry_run": {
+          "name": "Simulation"
+        }
+      }
+    },
+    "print_text": {
+      "name": "Impression de texte",
+      "description": "Imprime les lignes fournies.",
+      "fields": {
+        "text": {
+          "name": "Texte"
+        },
+        "scale": {
+          "name": "Échelle"
+        },
+        "address": {
+          "name": "Adresse"
+        },
+        "dry_run": {
+          "name": "Simulation"
+        }
+      }
+    },
+    "feed": {
+      "name": "Avance papier",
+      "description": "Fait avancer le papier.",
+      "fields": {
+        "mm": {
+          "name": "Millimètres"
+        },
+        "address": {
+          "name": "Adresse"
+        }
+      }
+    },
+    "diagnose": {
+      "name": "Diagnostic de liaison",
+      "description": "Mesure le débit sans imprimer.",
+      "fields": {
+        "address": {
+          "name": "Adresse"
+        }
+      }
+    }
+  }
+}

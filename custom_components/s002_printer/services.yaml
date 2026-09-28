@@ -1,0 +1,81 @@
+# Services exposés par l'intégration ORGSTA S002.
+print_test:
+  name: Impression de test
+  description: >-
+    Imprime un motif de validation (repères de début/fin, 6 bandes distinctes de 1 mm).
+    Consomme environ 14 mm de papier.
+  fields:
+    address:
+      name: Adresse
+      description: Adresse MAC de l'imprimante (facultatif si une seule est configurée).
+      example: "06:03:DD:EC:16:4D"
+      selector:
+        text:
+    dry_run:
+      name: Simulation
+      description: Ne rien envoyer (calcule seulement les trames).
+      default: false
+      selector:
+        boolean:
+
+print_text:
+  name: Impression de texte
+  description: Imprime des lignes de texte, une trame d'image après l'autre.
+  fields:
+    text:
+      name: Texte
+      description: Une ligne par ligne imprimée.
+      required: true
+      example: "Liste de courses\nLait\nPain"
+      selector:
+        text:
+          multiline: true
+    scale:
+      name: Échelle
+      description: Multiplicateur entier de la taille de police (1 à 6).
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 6
+          mode: box
+    address:
+      name: Adresse
+      description: Adresse MAC de l'imprimante (facultatif si une seule est configurée).
+      selector:
+        text:
+    dry_run:
+      name: Simulation
+      default: false
+      selector:
+        boolean:
+
+feed:
+  name: Avance papier
+  description: Fait avancer le papier sans rien imprimer (unité ≈ 0,1 mm).
+  fields:
+    mm:
+      name: Millimètres
+      description: Longueur d'avance.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 200
+          unit_of_measurement: mm
+          mode: box
+    address:
+      name: Adresse
+      selector:
+        text:
+
+diagnose:
+  name: Diagnostic de liaison
+  description: >-
+    Se connecte SANS imprimer et renvoie le débit mesuré, le canal d'écriture retenu et
+    les crédits de contrôle de flux. C'est le test à lancer en premier depuis un proxy BLE.
+  fields:
+    address:
+      name: Adresse
+      selector:
+        text:
