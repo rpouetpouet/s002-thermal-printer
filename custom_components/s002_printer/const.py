@@ -19,9 +19,12 @@ NOTIFY_FLOW_UUID = "0000ff03-0000-1000-8000-00805f9b34fb"
 # Taille d'un paquet d'écriture. La MTU négociée est de 240 octets (annoncée par
 # l'imprimante), donc 237 utiles au maximum ; on reste à 200 comme sur le banc d'essai.
 DEFAULT_CHUNK_SIZE = 200
+# ⚠️ Écriture AVEC réponse : sans elle l'imprimante reçoit les octets et n'imprime RIEN
+# (panne silencieuse, constatée le 28/09 via proxy).
+DEFAULT_WRITE_RESPONSE = True
 # Fenêtre de contrôle de flux : l'imprimante acquitte (`01 05`) tous les 5 paquets.
 FLOW_WINDOW = 5
-FLOW_TIMEOUT_MS = 900
+FLOW_TIMEOUT_MS = 300
 
 # --- Géométrie (mesurée : cadre à 2 mm du bord gauche, 49 mm de large, 200 lignes = 16 mm) ---
 PRINT_WIDTH_DOTS = 576          # 576 points = 48,8 mm ≈ 49 mm mesurés
@@ -63,3 +66,4 @@ CONF_CHUNK_SIZE = "chunk_size"
 CONF_FRAME_PAUSE_MS = "frame_pause_ms"
 CONF_FEED_BEFORE_MM = "feed_before_mm"
 CONF_FEED_AFTER_MM = "feed_after_mm"
+CONF_WRITE_RESPONSE = "write_response"

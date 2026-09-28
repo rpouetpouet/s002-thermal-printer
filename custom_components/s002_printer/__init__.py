@@ -19,12 +19,14 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     CONF_ADDRESS,
     CONF_CHUNK_SIZE,
+    CONF_WRITE_RESPONSE,
     CONF_FEED_AFTER_MM,
     CONF_FEED_BEFORE_MM,
     CONF_FRAME_PAUSE_MS,
     CONF_NAME,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_FRAME_PAUSE_MS,
+    DEFAULT_WRITE_RESPONSE,
     DOMAIN,
     MAX_LINES_PER_FRAME,
 )
@@ -68,6 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         address=adresse,
         name=donnees.get(CONF_NAME, "S002"),
         chunk_size=options.get(CONF_CHUNK_SIZE, DEFAULT_CHUNK_SIZE),
+        write_response=options.get(CONF_WRITE_RESPONSE, DEFAULT_WRITE_RESPONSE),
         frame_pause_ms=options.get(CONF_FRAME_PAUSE_MS, DEFAULT_FRAME_PAUSE_MS),
         lines_per_frame=options.get("lines_per_frame", MAX_LINES_PER_FRAME),
         feed_before_mm=options.get(CONF_FEED_BEFORE_MM, 0.0),

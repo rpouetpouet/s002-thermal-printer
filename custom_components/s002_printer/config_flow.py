@@ -32,8 +32,10 @@ from .const import (
     CONF_FEED_BEFORE_MM,
     CONF_FRAME_PAUSE_MS,
     CONF_NAME,
+    CONF_WRITE_RESPONSE,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_FRAME_PAUSE_MS,
+    DEFAULT_WRITE_RESPONSE,
     DOMAIN,
     MAX_LINES_PER_FRAME,
 )
@@ -87,6 +89,11 @@ def _schema_options(defauts: dict[str, Any]) -> vol.Schema:
             vol.Optional(
                 CONF_FEED_AFTER_MM, default=defauts.get(CONF_FEED_AFTER_MM, 0.0)
             ): SEL_DISTANCE,
+            # bool : sérialisable tel quel par HA (cv.boolean).
+            vol.Optional(
+                CONF_WRITE_RESPONSE,
+                default=defauts.get(CONF_WRITE_RESPONSE, DEFAULT_WRITE_RESPONSE),
+            ): cv.boolean,
         }
     )
 
@@ -130,6 +137,7 @@ class S002ConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_FRAME_PAUSE_MS: user_input[CONF_FRAME_PAUSE_MS],
                         CONF_FEED_BEFORE_MM: user_input[CONF_FEED_BEFORE_MM],
                         CONF_FEED_AFTER_MM: user_input[CONF_FEED_AFTER_MM],
+                        CONF_WRITE_RESPONSE: user_input[CONF_WRITE_RESPONSE],
                     },
                 )
 

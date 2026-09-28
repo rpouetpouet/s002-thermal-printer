@@ -11,7 +11,8 @@
           "lines_per_frame": "Lignes par trame d'image",
           "frame_pause_ms": "Pause entre trames (ms)",
           "feed_before_mm": "Avance avant impression (mm)",
-          "feed_after_mm": "Avance après impression (mm)"
+          "feed_after_mm": "Avance après impression (mm)",
+          "write_response": "Écriture BLE avec réponse (requis par le S002)"
         }
       }
     },
@@ -32,7 +33,8 @@
           "lines_per_frame": "Lignes par trame d'image",
           "frame_pause_ms": "Pause entre trames (ms)",
           "feed_before_mm": "Avance avant impression (mm)",
-          "feed_after_mm": "Avance après impression (mm)"
+          "feed_after_mm": "Avance après impression (mm)",
+          "write_response": "Écriture BLE avec réponse (requis par le S002)"
         }
       }
     }

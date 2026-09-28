@@ -29,6 +29,7 @@ from .ble import S002Transport, S002Error
 from .const import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_FRAME_PAUSE_MS,
+    DEFAULT_WRITE_RESPONSE,
     MAX_LINES_PER_FRAME,
     MSG_IMAGE_SLICE,
     PRINT_WIDTH_DOTS,
@@ -73,6 +74,7 @@ class S002Printer:
         address: str,
         name: str = "S002",
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        write_response: bool = DEFAULT_WRITE_RESPONSE,
         frame_pause_ms: int = DEFAULT_FRAME_PAUSE_MS,
         lines_per_frame: int = MAX_LINES_PER_FRAME,
         feed_before_mm: float = 0.0,
@@ -83,6 +85,7 @@ class S002Printer:
         self.name = name
         # int() : les sélecteurs numériques de HA renvoient des flottants (cf. yk.chunks).
         self.chunk_size = int(chunk_size)
+        self.write_response = bool(write_response)
         self.frame_pause_ms = int(frame_pause_ms)
         self.lines_per_frame = max(1, min(MAX_LINES_PER_FRAME, int(lines_per_frame)))
         self.feed_before_mm = feed_before_mm
@@ -115,7 +118,7 @@ class S002Printer:
         async with _verrou(self.address):
             debut = time.monotonic()
             transport = S002Transport(
-                self.hass, self.address, self.name, self.chunk_size
+                self.hass, self.address, self.name, self.chunk_size, self.write_response
             )
             try:
                 await transport.connect()
@@ -209,7 +212,9 @@ class S002Printer:
         Sert de premier test depuis un proxy BLE : si les canaux `ff02` et les crédits
         de flux apparaissent, le passage par proxy est fonctionnel.
         """
-        transport = S002Transport(self.hass, self.address, self.name, self.chunk_size)
+        transport = S002Transport(
+            self.hass, self.address, self.name, self.chunk_size, self.write_response
+        )
         await transport.connect()
         try:
             # on ne consomme aucun papier : simple lecture de l'état annoncé
