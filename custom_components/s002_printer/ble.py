@@ -196,11 +196,21 @@ class S002Transport:
             candidats.sort(key=lambda c: -c[0])
             self.stats.scanner_candidats = [f"{s} {r} dBm" for r, s, _ in candidats]
             rssi, source, vu = candidats[0]
-            _LOGGER.info(
-                "S002 %s : chemin retenu %s (%s dBm) parmi %s",
-                self.address, source, rssi, self.stats.scanner_candidats,
+            # L'appareil est dans `.ble_device` (habluetooth 6.26.11, la version épinglée
+            # par HA) — `.device` n'existe pas : sans le repli on concluait « introuvable »
+            # alors que le scanner venait de le voir (erreur vécue en v0.1.8).
+            appareil = getattr(vu, "ble_device", None) or getattr(vu, "device", None)
+            if appareil is not None:
+                _LOGGER.info(
+                    "S002 %s : chemin retenu %s (%s dBm) parmi %s",
+                    self.address, source, rssi, self.stats.scanner_candidats,
+                )
+                return appareil, source, (None if rssi == -127 else rssi)
+            _LOGGER.warning(
+                "S002 %s : %s voit l'imprimante mais aucun champ d'appareil exploitable "
+                "(%s) — repli sur l'autoroute HA",
+                self.address, source, type(vu).__name__,
             )
-            return getattr(vu, "device", None), source, (None if rssi == -127 else rssi)
 
         device = bluetooth.async_ble_device_from_address(
             self.hass, self.address, connectable=True
