@@ -35,6 +35,7 @@ from .const import (
     CONF_WRITE_RESPONSE,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_FRAME_PAUSE_MS,
+    DEFAULT_LINES_PER_FRAME,
     DEFAULT_WRITE_RESPONSE,
     DOMAIN,
     MAX_LINES_PER_FRAME,
@@ -77,7 +78,7 @@ def _schema_options(defauts: dict[str, Any]) -> vol.Schema:
             ): SEL_PAQUETS,
             vol.Optional(
                 "lines_per_frame",
-                default=defauts.get("lines_per_frame", MAX_LINES_PER_FRAME),
+                default=defauts.get("lines_per_frame", DEFAULT_LINES_PER_FRAME),
             ): SEL_LIGNES,
             vol.Optional(
                 CONF_FRAME_PAUSE_MS,

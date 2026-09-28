@@ -41,6 +41,8 @@ association.
 | `s002_printer.print_test` | Motif de validation (repères + 6 bandes), ≈ 14 mm de papier |
 | `s002_printer.print_text` | Imprime les lignes fournies (`text`, `scale` 1-6) |
 | `s002_printer.feed` | Avance papier seule (`mm`) |
+| `s002_printer.print_raw` | Raster brut en base64 (72 o/ligne, 1 = noir) — reproductible à l'octet |
+| `s002_printer.print_image` | Image PNG/JPEG en base64, mise à l'échelle 576 points (`dither`, `invert`) |
 | `s002_printer.diagnose` | Se connecte **sans imprimer** et renvoie le débit mesuré |
 
 Tous les services acceptent `address` (si plusieurs imprimantes) et renvoient un compte
@@ -68,9 +70,22 @@ action:
 | Option | Défaut | Rôle |
 | --- | --- | --- |
 | `chunk_size` | 200 | Taille des paquets d'écriture BLE (20-237 ; MTU 240) |
-| `lines_per_frame` | 40 | Lignes par trame (max mesuré : 40) |
+| `lines_per_frame` | **8** | Lignes par trame. 8 ≈ 160 ms via proxy ; 40 (le maximum protocolaire) ≈ 870 ms → **blancs de 4 mm garantis** |
 | `frame_pause_ms` | 0 | Pause entre trames (≤ 400 ms, sinon blanc garanti) |
 | `feed_before_mm` / `feed_after_mm` | 0 | Marges d'avance autour de l'image |
+
+## Résultats mesurés (chemin proxy BLE ESP32-C3 → S002)
+
+Test de référence : image « MARVIN » encadrée, 200 lignes (16,93 mm), imprimée **continue**
+depuis Home Assistant, alors que la VM HA n'a **aucun adaptateur Bluetooth**.
+
+| grandeur | valeur |
+| --- | --- |
+| connexion | 460 ms (une fois l'appareil connu) ; 14-23 s au tout premier essai (découverte) |
+| coût par paquet de 200 o | **54 ms** en moyenne, 118 ms max (≈ 4 ms en direct sur un hôte BLE local) |
+| débit utile | **2,6 ko/s** |
+| trame de 8 lignes | **155 ms** moyenne, 218 ms max → sous la tolérance de pause (400 ms) |
+| impression complète | 6,4 s pour 16,93 mm (200 lignes, 25 tranches) |
 
 ## Limites connues
 

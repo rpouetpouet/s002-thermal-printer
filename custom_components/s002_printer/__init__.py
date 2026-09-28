@@ -26,6 +26,7 @@ from .const import (
     CONF_NAME,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_FRAME_PAUSE_MS,
+    DEFAULT_LINES_PER_FRAME,
     DEFAULT_WRITE_RESPONSE,
     DOMAIN,
     MAX_LINES_PER_FRAME,
@@ -87,7 +88,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         chunk_size=options.get(CONF_CHUNK_SIZE, DEFAULT_CHUNK_SIZE),
         write_response=options.get(CONF_WRITE_RESPONSE, DEFAULT_WRITE_RESPONSE),
         frame_pause_ms=options.get(CONF_FRAME_PAUSE_MS, DEFAULT_FRAME_PAUSE_MS),
-        lines_per_frame=options.get("lines_per_frame", MAX_LINES_PER_FRAME),
+        lines_per_frame=options.get("lines_per_frame", DEFAULT_LINES_PER_FRAME),
         feed_before_mm=options.get(CONF_FEED_BEFORE_MM, 0.0),
         feed_after_mm=options.get(CONF_FEED_AFTER_MM, 0.0),
     )

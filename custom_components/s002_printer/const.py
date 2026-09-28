@@ -32,6 +32,10 @@ BYTES_PER_LINE = PRINT_WIDTH_DOTS // 8   # 72 octets par ligne
 DOTS_PER_MM = 11.81             # 300 dpi
 # Limite de trame mesurée : 40 lignes (2 880 o) acceptées, 42 (3 024 o) refusées.
 MAX_LINES_PER_FRAME = 40
+# Défaut PRUDENT pour un chemin proxifié (le cas normal ici) : 8 lignes ≈ 3 paquets
+# ≈ 160 ms, bien sous la tolérance de pause de ~400 ms. Le maximum protocolaire
+# (40 lignes ≈ 870 ms via proxy) provoque des blancs de 4 mm entre trames : mesuré.
+DEFAULT_LINES_PER_FRAME = 8
 # Tolérance de pause mesurée : 400 ms tolérées, 1 000 ms referment la tâche (blanc de 4 mm).
 DEFAULT_FRAME_PAUSE_MS = 0       # 0 = dos à dos (le plus sûr) ; < 200 ms = marge prudente
 
