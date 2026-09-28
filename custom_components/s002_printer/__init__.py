@@ -93,8 +93,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = imprimante
     _LOGGER.info("S002 %s configurée (%s)", adresse, donnees.get(CONF_NAME, "S002"))
+    # Sans ce rechargement, un changement d'options (taille de tranche, mot de passe…)
+    # resterait sans effet jusqu'au prochain redémarrage de HA : les réglages sont lus
+    # à la construction de S002Printer.
+    entry.async_on_unload(entry.add_update_listener(_async_options_modifiees))
     _async_register_services(hass)
     return True
+
+
+async def _async_options_modifiees(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Recharge l'entrée quand ses options changent (les réglages sont lus au setup)."""
+    _LOGGER.info("S002 : options modifiées → rechargement de l'entrée")
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
