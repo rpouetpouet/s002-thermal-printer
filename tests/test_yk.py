@@ -159,6 +159,11 @@ print("\n=== 6. Découpage en paquets BLE")
 p = yk.chunks(b"\xab" * 2458, 200)
 verifier("paquets de 200 o", [len(x) for x in p] == [200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 58], str([len(x) for x in p]))
 verifier("contenu préservé", b"".join(p) == b"\xab" * 2458)
+# Régression : les sélecteurs numériques de HA renvoient des flottants (200.0) et
+# range() les refuse — TypeError vécu en production le 28/09.
+p_float = yk.chunks(b"\xab" * 450, 200.0)
+verifier("taille de paquet flottante acceptée (selectors HA)", [len(x) for x in p_float] == [200, 200, 50],
+         str([len(x) for x in p_float]))
 
 print("\n" + "=" * 70)
 if echecs:

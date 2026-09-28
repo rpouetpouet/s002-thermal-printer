@@ -81,9 +81,10 @@ class S002Printer:
         self.hass = hass
         self.address = address.upper()
         self.name = name
-        self.chunk_size = chunk_size
-        self.frame_pause_ms = frame_pause_ms
-        self.lines_per_frame = max(1, min(MAX_LINES_PER_FRAME, lines_per_frame))
+        # int() : les sélecteurs numériques de HA renvoient des flottants (cf. yk.chunks).
+        self.chunk_size = int(chunk_size)
+        self.frame_pause_ms = int(frame_pause_ms)
+        self.lines_per_frame = max(1, min(MAX_LINES_PER_FRAME, int(lines_per_frame)))
         self.feed_before_mm = feed_before_mm
         self.feed_after_mm = feed_after_mm
 

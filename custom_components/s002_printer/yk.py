@@ -208,7 +208,13 @@ def text_raster(
 
 
 def chunks(data: bytes, size: int = DEFAULT_CHUNK_SIZE) -> list[bytes]:
-    """Découpe une trame en paquets de taille d'écriture BLE."""
+    """Découpe une trame en paquets de taille d'écriture BLE.
+
+    ⚠️ `int()` obligatoire : les sélecteurs numériques de HA renvoient des **flottants**
+    (200.0), et `range()` les refuse — `TypeError: 'float' object cannot be interpreted
+    as an integer`. Vécu le 28/09 lors du premier appel de service.
+    """
+    size = int(size)
     if size < 1:
         raise ValueError("taille de paquet invalide")
     return [data[i : i + size] for i in range(0, len(data), size)]

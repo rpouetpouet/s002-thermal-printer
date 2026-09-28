@@ -57,6 +57,7 @@ class WriteStats:
     flow_timeout: int = 0
     notify_state: int = 0
     notify_flow: int = 0
+    notify_errors: list[str] = field(default_factory=list)
     channel_handle: int | None = None
     channels_seen: list[str] = field(default_factory=list)
 
@@ -75,6 +76,7 @@ class WriteStats:
             "flow_timeout": self.flow_timeout,
             "notify_state": self.notify_state,
             "notify_flow": self.notify_flow,
+            "notify_errors": self.notify_errors,
             "channel_handle": self.channel_handle,
             "channels_seen": self.channels_seen,
         }
@@ -93,7 +95,8 @@ class S002Transport:
         self.hass = hass
         self.address = address.upper()
         self.name = name
-        self.chunk_size = max(20, min(237, chunk_size))   # MTU 240 → 237 utiles au maximum
+        # int() : les sélecteurs numériques de HA renvoient des flottants (cf. yk.chunks).
+        self.chunk_size = max(20, min(237, int(chunk_size)))  # MTU 240 → 237 utiles au max
         self.stats = WriteStats()
         self._client: BleakClientWithServiceCache | None = None
         self._write_char: BleakGATTCharacteristic | None = None
@@ -177,6 +180,7 @@ class S002Transport:
             try:
                 await self._client.start_notify(uuid, callback)
             except Exception as err:  # noqa: BLE001 - l'absence de notify ne doit pas bloquer
+                self.stats.notify_errors.append(f"{uuid}: {type(err).__name__}: {err}")
                 _LOGGER.warning("S002 : abonnement %s impossible (%s)", uuid, err)
 
     # ------------------------------------------------------------------ écriture
