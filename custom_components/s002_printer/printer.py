@@ -29,6 +29,7 @@ from .ble import S002Transport, S002Error
 from .const import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_FRAME_PAUSE_MS,
+    FRAME_BUDGET_MS,
     DEFAULT_WRITE_RESPONSE,
     MAX_LINES_PER_FRAME,
     MSG_IMAGE_SLICE,
@@ -77,6 +78,7 @@ class S002Printer:
         write_response: bool = DEFAULT_WRITE_RESPONSE,
         frame_pause_ms: int = DEFAULT_FRAME_PAUSE_MS,
         lines_per_frame: int = MAX_LINES_PER_FRAME,
+        frame_budget_ms: int = FRAME_BUDGET_MS,
         feed_before_mm: float = 0.0,
         feed_after_mm: float = 0.0,
     ) -> None:
@@ -88,6 +90,8 @@ class S002Printer:
         self.write_response = bool(write_response)
         self.frame_pause_ms = int(frame_pause_ms)
         self.lines_per_frame = max(1, min(MAX_LINES_PER_FRAME, int(lines_per_frame)))
+        # Plafond de durée visé par trame ; `lines_per_frame` reste le maximum protocolaire.
+        self.frame_budget_ms = max(50, int(frame_budget_ms))
         self.feed_before_mm = feed_before_mm
         self.feed_after_mm = feed_after_mm
 
@@ -136,19 +140,41 @@ class S002Printer:
                     compteur = (compteur + 1) & 0x3F
                     await asyncio.sleep(SETTLE_AFTER_WIDTH_MS / 1000)
 
-                # 4. tranches d'image, dos à dos
-                for trame, _ in yk.iter_image_frames(
-                    raster, self.lines_per_frame, compteur
-                ):
-                    duree = await transport.write_frame(trame)
-                    _LOGGER.debug(
-                        "S002 %s : tranche %d/%d envoyée en %.0f ms",
-                        self.address,
-                        transport.stats.frames - 2,
-                        (resultat.raster_lines + self.lines_per_frame - 1)
-                        // self.lines_per_frame,
-                        duree,
+                # 4. tranches d'image, dos à dos, TAILLE ADAPTATIVE
+                # La latence du chemin (proxy BLE) varie du simple au triple selon le
+                # scanner retenu et l'encombrement radio. Une trame fixe finit donc par
+                # dépasser la tolérance de pause (~400 ms) → l'imprimante referme la
+                # tâche et avance 4 mm de BLANC. On recalcule la taille après CHAQUE
+                # trame à partir du pic de latence récent, en visant `frame_budget_ms`
+                # et en ne descendant jamais sous une écriture (2 lignes pour 200 o).
+                lignes = yk.split_lines(raster)
+                lignes_par_ecriture = max(1, self.chunk_size // yk.BYTES_PER_LINE)
+                ecritures_max = max(
+                    1,
+                    (self.lines_per_frame + lignes_par_ecriture - 1) // lignes_par_ecriture,
+                )
+                pic_ms = 60.0  # amorçage : ordre de grandeur mesuré sur un proxy moyen
+                position = 0
+                while position < len(lignes):
+                    ecritures = max(
+                        1,
+                        min(ecritures_max, int(self.frame_budget_ms // max(pic_ms, 1.0))),
                     )
+                    taille = min(len(lignes) - position, ecritures * lignes_par_ecriture)
+                    payload = b"".join(lignes[position : position + taille])
+                    trame = yk.build_frame(yk.MSG_IMAGE_SLICE, payload, compteur)
+                    duree = await transport.write_frame(trame)
+                    compteur = (compteur + 1) & 0x3F
+                    transport.stats.frame_lines.append(taille)
+                    _LOGGER.debug(
+                        "S002 %s : tranche de %d lignes pour %d/%d lignes envoyée en %.0f ms "
+                        "(pic récent %.0f ms/écriture)",
+                        self.address, taille, position + taille, len(lignes), duree, pic_ms,
+                    )
+                    # Le PIC récent seul compte : c'est lui qui provoque les blancs.
+                    if transport.stats.chunk_ms:
+                        pic_ms = max(transport.stats.chunk_ms[-6:])
+                    position += taille
                     if self.frame_pause_ms > 0:
                         await asyncio.sleep(self.frame_pause_ms / 1000)
 

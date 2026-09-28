@@ -74,6 +74,22 @@ action:
 | `frame_pause_ms` | 0 | Pause entre trames (≤ 400 ms, sinon blanc garanti) |
 | `feed_before_mm` / `feed_after_mm` | 0 | Marges d'avance autour de l'image |
 
+## Robustesse du transport (v0.1.8)
+
+Deux protections, nées de mesures sur le matériel — sans elles, une impression **réussie**
+peut être suivie d'une impression **striée** sans qu'on ait rien changé au code :
+
+- **Taille de trame adaptative.** L'intégration vise **250 ms par trame** et recalcule la taille
+  après chaque trame à partir du **pic de latence récent** (de 2 lignes au minimum jusqu'à
+  `lines_per_frame`). La latence d'un proxy BLE varie du simple au triple ; une trame fixe finit
+  par dépasser la tolérance de pause (~400 ms), l'imprimante referme la tâche et avance 4 mm de blanc.
+- **Choix du proxy au meilleur RSSI.** Home Assistant retient par défaut le scanner dont l'annonce
+  est la plus **récente**, pas la plus **forte** : mesuré sur ce parc, la connexion est passée par un
+  proxy à **−99 dBm** au lieu d'un autre à **−84 dBm**, doublant le coût par paquet (97 ms contre 54).
+  L'intégration liste les scanners via `async_scanner_devices_by_address` et **trie sur le RSSI**.
+  Le chemin retenu et la liste des candidats sont renvoyés par les services (`timings.scanner_source`,
+  `scanner_rssi`, `scanner_candidats`).
+
 ## Résultats mesurés (chemin proxy BLE ESP32-C3 → S002)
 
 Test de référence : image « MARVIN » encadrée, 200 lignes (16,93 mm), imprimée **continue**

@@ -79,6 +79,12 @@ class WriteStats:
     write_response: bool = DEFAULT_WRITE_RESPONSE
     channel_handle: int | None = None
     channels_seen: list[str] = field(default_factory=list)
+    # Chemin retenu : quel scanner porte la connexion et à quelle force de signal.
+    scanner_source: str = ""
+    scanner_rssi: int | None = None
+    scanner_candidats: list[str] = field(default_factory=list)
+    # Tailles de trame réellement émises (l'adaptatif doit rester sous la tolérance).
+    frame_lines: list[int] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         total = sum(self.frame_ms)
@@ -101,6 +107,11 @@ class WriteStats:
             "write_response": self.write_response,
             "channel_handle": self.channel_handle,
             "channels_seen": self.channels_seen,
+            "scanner_source": self.scanner_source,
+            "scanner_rssi": self.scanner_rssi,
+            "scanner_candidats": self.scanner_candidats,
+            "min_frame_lines": min(self.frame_lines) if self.frame_lines else None,
+            "max_frame_lines": max(self.frame_lines) if self.frame_lines else None,
         }
 
 
@@ -133,9 +144,9 @@ class S002Transport:
     # ------------------------------------------------------------------ connexion
     async def connect(self) -> None:
         """Établit la connexion (routée par HA : proxy ou adaptateur local)."""
-        device = bluetooth.async_ble_device_from_address(
-            self.hass, self.address, connectable=True
-        )
+        device, source, rssi = self._meilleur_chemin()
+        self.stats.scanner_source = source
+        self.stats.scanner_rssi = rssi
         if device is None:
             raise S002Error(
                 f"Imprimante {self.address} introuvable : elle doit être à portée d'un "
@@ -155,6 +166,46 @@ class S002Transport:
         _LOGGER.info("S002 %s : connecté en %.0f ms", self.address, self.stats.connect_ms)
         self._select_channels()
         await self._subscribe_notifications()
+
+    def _meilleur_chemin(self) -> tuple[object | None, str, int | None]:
+        """Choisit le scanner le plus FORT parmi ceux qui voient l'imprimante.
+
+        `async_ble_device_from_address` retient le scanner dont l'annonce est la plus
+        RÉCENTE, pas la plus forte : mesuré sur ce parc, HA est passé par un proxy à
+        **−99 dBm** (batcave) au lieu d'un autre à **−84 dBm** (cuisine), ce qui a doublé
+        le coût par paquet (97 ms contre 54) et fait dépasser la tolérance de pause de
+        l'imprimante → blancs de 4 mm. On va donc chercher la liste complète des
+        scanners (`async_scanner_devices_by_address`) et on trie sur le RSSI.
+        """
+        candidats: list[tuple[int, str, object]] = []
+        try:
+            for vu in bluetooth.async_scanner_devices_by_address(
+                self.hass, self.address, connectable=True
+            ):
+                rssi = getattr(vu.advertisement, "rssi", None)
+                source = (
+                    getattr(getattr(vu, "scanner", None), "source", None)
+                    or getattr(getattr(vu, "scanner", None), "name", None)
+                    or "?"
+                )
+                candidats.append((rssi if rssi is not None else -127, str(source), vu))
+        except Exception as err:  # noqa: BLE001 — API indisponible : on retombe sur l'autoroute HA
+            _LOGGER.debug("S002 %s : liste des scanners indisponible (%s)", self.address, err)
+
+        if candidats:
+            candidats.sort(key=lambda c: -c[0])
+            self.stats.scanner_candidats = [f"{s} {r} dBm" for r, s, _ in candidats]
+            rssi, source, vu = candidats[0]
+            _LOGGER.info(
+                "S002 %s : chemin retenu %s (%s dBm) parmi %s",
+                self.address, source, rssi, self.stats.scanner_candidats,
+            )
+            return getattr(vu, "device", None), source, (None if rssi == -127 else rssi)
+
+        device = bluetooth.async_ble_device_from_address(
+            self.hass, self.address, connectable=True
+        )
+        return device, "autoroute HA", None
 
     def _select_channels(self) -> None:
         """Choisit les caractéristiques de la SECONDE occurrence du service ff00.

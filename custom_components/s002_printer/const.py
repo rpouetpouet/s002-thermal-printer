@@ -36,6 +36,10 @@ MAX_LINES_PER_FRAME = 40
 # ≈ 160 ms, bien sous la tolérance de pause de ~400 ms. Le maximum protocolaire
 # (40 lignes ≈ 870 ms via proxy) provoque des blancs de 4 mm entre trames : mesuré.
 DEFAULT_LINES_PER_FRAME = 8
+# Budget visé pour UNE trame d'image, en millisecondes. La tolérance de pause mesurée de
+# l'imprimante est de ~400 ms : au-delà, elle referme la tâche et avance 4 mm de BLANC.
+# On vise plus bas pour garder une marge (un pic de latence ne doit pas coûter du papier).
+FRAME_BUDGET_MS = 250
 # Tolérance de pause mesurée : 400 ms tolérées, 1 000 ms referment la tâche (blanc de 4 mm).
 DEFAULT_FRAME_PAUSE_MS = 0       # 0 = dos à dos (le plus sûr) ; < 200 ms = marge prudente
 
