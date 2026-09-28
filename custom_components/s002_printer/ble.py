@@ -85,6 +85,10 @@ class WriteStats:
     scanner_candidats: list[str] = field(default_factory=list)
     # Tailles de trame réellement émises (l'adaptatif doit rester sous la tolérance).
     frame_lines: list[int] = field(default_factory=list)
+    # Ce que l'imprimante DIT d'elle-même (trame d'état 0x10) : sans ces valeurs, un
+    # « rien n'a été imprimé » reste inexplicable alors que le transport a réussi.
+    state_payloads: list[str] = field(default_factory=list)
+    battery_pct: int | None = None
 
     def as_dict(self) -> dict:
         total = sum(self.frame_ms)
@@ -112,6 +116,8 @@ class WriteStats:
             "scanner_candidats": self.scanner_candidats,
             "min_frame_lines": min(self.frame_lines) if self.frame_lines else None,
             "max_frame_lines": max(self.frame_lines) if self.frame_lines else None,
+            "state_payloads": self.state_payloads[-4:],
+            "battery_pct": self.battery_pct,
         }
 
 
@@ -276,7 +282,15 @@ class S002Transport:
 
         def _on_state(_char: BleakGATTCharacteristic, data: bytearray) -> None:
             self.stats.notify_state += 1
-            _LOGGER.debug("S002 état : %s", bytes(data).hex(" "))
+            brut = bytes(data)
+            self.stats.state_payloads.append(brut.hex(" "))
+            _LOGGER.debug("S002 état : %s", brut.hex(" "))
+            # Format mesuré (cf. skill) : payload[7] = batterie en % (0x35 = 53 %).
+            # On lit large : en-tête de 5 octets, contrôle de 5 octets en queue.
+            if len(brut) >= 13:
+                charge = brut[5:-5][7] if len(brut[5:-5]) > 7 else None
+                if charge is not None and 0 < charge <= 100:
+                    self.stats.battery_pct = charge
 
         for char, callback, nom in (
             (self._flow_char, _on_flow, "flux ff03"),
