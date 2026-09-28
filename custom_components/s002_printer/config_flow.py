@@ -4,11 +4,13 @@ L'adresse peut être saisie à la main (elle est imprimée sur l'étiquette de l
 ou préremplie automatiquement quand HA découvre un appareil nommé « S002 ».
 
 ⚠️ PIÈGE HA VÉCU (28/09/2026) : un schéma de formulaire ne peut contenir **que** des
-validateurs sérialisables (`cv.string`, `cv.boolean`, `vol.All(vol.Coerce(int), vol.Range(...))`,
-…). Utiliser une simple fonction Python maison comme type de champ fait échouer la
-sérialisation du formulaire côté Home Assistant (`probatio.codecs.fields.to_field_list`),
-ce qui se traduit par un **HTTP 500** à la création du flow — sans message explicite côté
-client. Les validateurs de HA, jamais les siens.
+validateurs que le sérialiseur de HA sait convertir (`homeassistant.helpers.config_validation.
+custom_serializer` + `probatio`). Sont supportés : `str`/`cv.string`, `bool`/`cv.boolean`,
+`int`, `float`, et les **selectors**. En revanche `vol.All(vol.Coerce(int), vol.Range(...))`,
+`vol.Coerce(...)` et `vol.In(...)` font échouer la sérialisation
+(`ValueError: unable to serialize schema`) → **HTTP 500** à la création du flow, sans message
+utile côté client. Vérifié en local avec les versions exactes de HA (probatio 0.11.4 +
+voluptuous 0.15.2) : voir `tests/test_schema_formulaire.py`.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import selector
 
 from .const import (
     CONF_ADDRESS,
@@ -35,11 +38,32 @@ from .const import (
     MAX_LINES_PER_FRAME,
 )
 
-# Uniquement des validateurs que HA sait sérialiser vers le frontend.
-NOMBRE_PAQUETS = vol.All(vol.Coerce(int), vol.Range(min=20, max=237))
-NOMBRE_LIGNES = vol.All(vol.Coerce(int), vol.Range(min=1, max=MAX_LINES_PER_FRAME))
-PAUSE_MS = vol.All(vol.Coerce(int), vol.Range(min=0, max=400))
-DISTANCE_MM = vol.All(vol.Coerce(float), vol.Range(min=0, max=100))
+# --- Champs numériques : selectors HA (sérialisables + bornes affichées dans l'UI) -------
+# Les contraintes sont de toute façon re-bornées dans le code (ble.py / printer.py) :
+# le formulaire ne doit jamais être la seule garde.
+SEL_PAQUETS = selector.NumberSelector(
+    selector.NumberSelectorConfig(
+        min=20, max=237, step=1, mode=selector.NumberSelectorMode.BOX,
+        unit_of_measurement="octets",
+    )
+)
+SEL_LIGNES = selector.NumberSelector(
+    selector.NumberSelectorConfig(
+        min=1, max=MAX_LINES_PER_FRAME, step=1, mode=selector.NumberSelectorMode.BOX,
+    )
+)
+SEL_PAUSE = selector.NumberSelector(
+    selector.NumberSelectorConfig(
+        min=0, max=400, step=10, mode=selector.NumberSelectorMode.BOX,
+        unit_of_measurement="ms",
+    )
+)
+SEL_DISTANCE = selector.NumberSelector(
+    selector.NumberSelectorConfig(
+        min=0, max=100, step=0.5, mode=selector.NumberSelectorMode.BOX,
+        unit_of_measurement="mm",
+    )
+)
 
 
 def _schema_options(defauts: dict[str, Any]) -> vol.Schema:
@@ -48,21 +72,21 @@ def _schema_options(defauts: dict[str, Any]) -> vol.Schema:
         {
             vol.Optional(
                 CONF_CHUNK_SIZE, default=defauts.get(CONF_CHUNK_SIZE, DEFAULT_CHUNK_SIZE)
-            ): NOMBRE_PAQUETS,
+            ): SEL_PAQUETS,
             vol.Optional(
                 "lines_per_frame",
                 default=defauts.get("lines_per_frame", MAX_LINES_PER_FRAME),
-            ): NOMBRE_LIGNES,
+            ): SEL_LIGNES,
             vol.Optional(
                 CONF_FRAME_PAUSE_MS,
                 default=defauts.get(CONF_FRAME_PAUSE_MS, DEFAULT_FRAME_PAUSE_MS),
-            ): PAUSE_MS,
+            ): SEL_PAUSE,
             vol.Optional(
                 CONF_FEED_BEFORE_MM, default=defauts.get(CONF_FEED_BEFORE_MM, 0.0)
-            ): DISTANCE_MM,
+            ): SEL_DISTANCE,
             vol.Optional(
                 CONF_FEED_AFTER_MM, default=defauts.get(CONF_FEED_AFTER_MM, 0.0)
-            ): DISTANCE_MM,
+            ): SEL_DISTANCE,
         }
     )
 
