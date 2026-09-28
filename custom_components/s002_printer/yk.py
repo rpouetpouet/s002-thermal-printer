@@ -207,6 +207,37 @@ def text_raster(
     return bytes(255 - b for b in img.tobytes())
 
 
+def image_to_raster(
+    donnees: bytes,
+    dither: bool = False,
+    invert: bool = False,
+    width_dots: int = PRINT_WIDTH_DOTS,
+) -> bytes:
+    """Convertit une image (PNG/JPEG/…) en raster 1 bit pour l'imprimante.
+
+    `dither=False` : seuillage franc (net, adapté au texte et aux traits).
+    `dither=True`  : tramage Floyd-Steinberg (utile pour les photos).
+    L'image est mise à l'échelle de la largeur d'impression (576 points) en conservant
+    les proportions. Sortie : même format que l'imprimante (1 = noir, MSB d'abord).
+    """
+    import io
+
+    from PIL import Image, ImageOps
+
+    with Image.open(io.BytesIO(donnees)) as source:
+        img = source.convert("L")
+        if img.width != width_dots:
+            hauteur = max(1, round(img.height * width_dots / img.width))
+            img = img.resize((width_dots, hauteur), Image.LANCZOS)
+        if invert:
+            img = ImageOps.invert(img)
+        img = img.convert("1") if dither else img.point(
+            lambda p: 255 if p > 128 else 0
+        ).convert("1")
+        # Pillow : bit à 1 = blanc → on inverse pour obtenir 1 = noir (format YK).
+        return bytes(255 - b for b in img.tobytes())
+
+
 def chunks(data: bytes, size: int = DEFAULT_CHUNK_SIZE) -> list[bytes]:
     """Découpe une trame en paquets de taille d'écriture BLE.
 

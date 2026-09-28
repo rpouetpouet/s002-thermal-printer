@@ -79,3 +79,61 @@ diagnose:
       name: Adresse
       selector:
         text:
+
+print_raw:
+  name: Impression d'un raster brut
+  description: >-
+    Imprime un raster brut tel quel (72 octets par ligne, 1 = noir, bit de poids fort en
+    premier), encodé en base64. Reproductible à l'octet près : sert à imprimer une image
+    déjà préparée et validée.
+  fields:
+    data:
+      name: Raster (base64)
+      description: Payload binaire du raster, encodé en base64.
+      required: true
+      selector:
+        text:
+          multiline: true
+    address:
+      name: Adresse
+      selector:
+        text:
+    dry_run:
+      name: Simulation
+      default: false
+      selector:
+        boolean:
+
+print_image:
+  name: Impression d'une image
+  description: >-
+    Imprime une image PNG/JPEG fournie en base64, redimensionnée à la largeur
+    d'impression (576 points, proportions conservées).
+  fields:
+    image:
+      name: Image (base64)
+      description: Contenu du fichier image, encodé en base64.
+      required: true
+      selector:
+        text:
+          multiline: true
+    dither:
+      name: Tramage
+      description: Tramage Floyd-Steinberg (recommandé pour les photos).
+      default: false
+      selector:
+        boolean:
+    invert:
+      name: Inverser
+      default: false
+      selector:
+        boolean:
+    address:
+      name: Adresse
+      selector:
+        text:
+    dry_run:
+      name: Simulation
+      default: false
+      selector:
+        boolean:

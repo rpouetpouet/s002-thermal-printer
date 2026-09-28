@@ -90,6 +90,42 @@
           "name": "Adresse"
         }
       }
+    },
+    "print_raw": {
+      "name": "Impression d'un raster brut",
+      "description": "Imprime un raster brut encodé en base64 (72 octets par ligne, 1 = noir).",
+      "fields": {
+        "data": {
+          "name": "Raster (base64)"
+        },
+        "address": {
+          "name": "Adresse"
+        },
+        "dry_run": {
+          "name": "Simulation"
+        }
+      }
+    },
+    "print_image": {
+      "name": "Impression d'une image",
+      "description": "Imprime une image PNG/JPEG en base64, mise à l'échelle 576 points.",
+      "fields": {
+        "image": {
+          "name": "Image (base64)"
+        },
+        "dither": {
+          "name": "Tramage"
+        },
+        "invert": {
+          "name": "Inverser"
+        },
+        "address": {
+          "name": "Adresse"
+        },
+        "dry_run": {
+          "name": "Simulation"
+        }
+      }
     }
   }
 }

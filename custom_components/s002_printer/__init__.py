@@ -38,6 +38,8 @@ PLATFORMS: list[str] = []
 
 SERVICE_PRINT_TEST = "print_test"
 SERVICE_PRINT_TEXT = "print_text"
+SERVICE_PRINT_RAW = "print_raw"
+SERVICE_PRINT_IMAGE = "print_image"
 SERVICE_FEED = "feed"
 SERVICE_DIAGNOSE = "diagnose"
 
@@ -57,6 +59,19 @@ PRINT_TEXT_SCHEMA = SERVICE_BASE_SCHEMA.extend(
 
 FEED_SCHEMA = SERVICE_BASE_SCHEMA.extend(
     {vol.Required("mm", default=10): vol.All(vol.Coerce(float), vol.Range(min=1, max=200))}
+)
+
+# `data` = raster brut (72 octets par ligne, 1 = noir) encodé en base64 — reproduction
+# exacte d'une image déjà préparée (ex. le `marvin.raw` validé sur le matériel).
+PRINT_RAW_SCHEMA = SERVICE_BASE_SCHEMA.extend({vol.Required("data"): cv.string})
+
+# `image` = PNG/JPEG en base64, mis à l'échelle 576 points par l'intégration.
+PRINT_IMAGE_SCHEMA = SERVICE_BASE_SCHEMA.extend(
+    {
+        vol.Required("image"): cv.string,
+        vol.Optional("dither", default=False): cv.boolean,
+        vol.Optional("invert", default=False): cv.boolean,
+    }
 )
 
 
@@ -107,6 +122,18 @@ def _resoudre(hass: HomeAssistant, call: ServiceCall) -> S002Printer:
     return next(iter(imprimantes.values()))
 
 
+def _decoder_base64(valeur: str) -> bytes:
+    """Décode une charge base64 (accepte les retours à la ligne et l'absence de padding)."""
+    import base64
+    import binascii
+
+    propre = "".join(valeur.split())
+    try:
+        return base64.b64decode(propre + "=" * (-len(propre) % 4), validate=True)
+    except (binascii.Error, ValueError) as err:
+        raise HomeAssistantError(f"base64 invalide : {err}") from err
+
+
 def _async_register_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, SERVICE_PRINT_TEST):
         return
@@ -128,6 +155,29 @@ def _async_register_services(hass: HomeAssistant) -> None:
         resultat = await _resoudre(hass, call).feed(call.data["mm"])
         return resultat.as_dict()
 
+    async def _print_raw(call: ServiceCall) -> dict:
+        raster = _decoder_base64(call.data["data"])
+        resultat = await _resoudre(hass, call).print_raster(
+            raster, dry_run=call.data.get("dry_run", False)
+        )
+        return resultat.as_dict()
+
+    async def _print_image(call: ServiceCall) -> dict:
+        from . import yk
+
+        try:
+            raster = yk.image_to_raster(
+                _decoder_base64(call.data["image"]),
+                dither=call.data.get("dither", False),
+                invert=call.data.get("invert", False),
+            )
+        except Exception as err:  # noqa: BLE001
+            raise HomeAssistantError(f"Image illisible : {err}") from err
+        resultat = await _resoudre(hass, call).print_raster(
+            raster, dry_run=call.data.get("dry_run", False)
+        )
+        return resultat.as_dict()
+
     async def _diagnose(call: ServiceCall) -> dict:
         return await _resoudre(hass, call).diagnose()
 
@@ -142,6 +192,14 @@ def _async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_FEED, _feed,
         schema=FEED_SCHEMA, supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_PRINT_RAW, _print_raw,
+        schema=PRINT_RAW_SCHEMA, supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_PRINT_IMAGE, _print_image,
+        schema=PRINT_IMAGE_SCHEMA, supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_DIAGNOSE, _diagnose,

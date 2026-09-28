@@ -90,6 +90,42 @@
           "name": "Adresse"
         }
       }
+    },
+    "print_raw": {
+      "name": "Print raw raster",
+      "description": "Print a base64 raw raster (72 bytes per line, 1 = black).",
+      "fields": {
+        "data": {
+          "name": "Raster (base64)"
+        },
+        "address": {
+          "name": "Address"
+        },
+        "dry_run": {
+          "name": "Dry run"
+        }
+      }
+    },
+    "print_image": {
+      "name": "Print image",
+      "description": "Print a base64 PNG/JPEG, scaled to 576 dots.",
+      "fields": {
+        "image": {
+          "name": "Image (base64)"
+        },
+        "dither": {
+          "name": "Dither"
+        },
+        "invert": {
+          "name": "Invert"
+        },
+        "address": {
+          "name": "Address"
+        },
+        "dry_run": {
+          "name": "Dry run"
+        }
+      }
     }
   }
 }
