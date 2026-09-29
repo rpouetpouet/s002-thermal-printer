@@ -20,6 +20,7 @@ Contraintes MESURÉES à respecter impérativement :
 from __future__ import annotations
 
 import logging
+import pathlib
 import struct
 from typing import Iterator
 
@@ -39,6 +40,39 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Police du texte imprimé : EMBARQUÉE dans l'intégration, parce que rien ne garantit ce qui est
+# installé sur la machine qui fait tourner Home Assistant. DejaVu Sans Condensed Bold est grasse
+# (des fûts de 2 à 3 points au lieu d'1 seul) et condensée pour ne pas trop perdre de caractères
+# par ligne. Mesures à l'échelle d'impression 2 : 5,0 % de points noirs contre 3,1 % avec la police
+# par défaut de Pillow, pour 40 caractères par ligne au lieu de 45. La police par défaut ne sait
+# pas écrire les accents (ils sortaient en carré vide) ; celle-ci les gère tous.
+_POLICE_EMBARQUEE = pathlib.Path(__file__).parent / "fonts" / "DejaVuSansCondensed-Bold.ttf"
+# Repli si le fichier venait à manquer (dépôt incomplet) : polices grasses du système.
+_POLICES_SYSTEME = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+)
+
+
+def _police_texte(taille: int):
+    """Renvoie la police grasse du texte imprimé.
+
+    Ordre de recherche : la police embarquée, puis les polices grasses du système, puis la police
+    par défaut de Pillow — un texte plus clair vaut mieux qu'une impression qui échoue.
+    """
+    from PIL import ImageFont  # import tardif : Pillow n'est requis que pour dessiner
+
+    for chemin in (_POLICE_EMBARQUEE, *_POLICES_SYSTEME):
+        try:
+            return ImageFont.truetype(str(chemin), taille)
+        except (OSError, ValueError):
+            continue
+    _LOGGER.warning(
+        "S002 : police grasse introuvable — repli sur la police par défaut, le texte sera plus clair"
+    )
+    return ImageFont.load_default(size=taille)
 
 
 # --------------------------------------------------------------------------------------
@@ -183,17 +217,17 @@ def text_raster(
 ) -> bytes:
     """Rasterise du texte en 1 bit (1 = noir).
 
-    Utilise la police bitmap par défaut de Pillow : disponible partout, aucune fonte à
-    embarquer — MAIS elle ne contient PAS les caractères accentués (ils sortent en carré
-    vide : vérifié). `scale` multiplie la taille par un entier (rendu net, pas
-    d'interpolation).
+    Utilise la police grasse embarquée (voir `_police_texte`) : le texte était trop clair, à
+    cause des fûts très fins de la police par défaut de Pillow — laquelle ne sait en plus pas
+    écrire les accents, qui sortaient en carré vide. `scale` multiplie la taille par un entier
+    (rendu net, pas d'interpolation).
 
     `wrap=True` replie les lignes trop larges sur les espaces : sans cela, le texte qui
     dépasse la largeur d'impression est **tronqué en silence** (défaut constaté).
     """
     from PIL import Image, ImageDraw, ImageFont  # import tardif : Pillow n'est requis qu'ici
 
-    font = ImageFont.load_default(size=11 * max(1, scale))
+    font = _police_texte(11 * max(1, scale))
     probe = Image.new("1", (PRINT_WIDTH_DOTS, 8), 1)
     probe_draw = ImageDraw.Draw(probe)
     line_height = max(1, probe_draw.textbbox((0, 0), "Ag", font=font)[3]) + 4

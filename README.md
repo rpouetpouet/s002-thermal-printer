@@ -231,8 +231,9 @@ depuis Home Assistant, alors que la VM HA n'a **aucun adaptateur Bluetooth**.
   intégration est prévue pour l'accueillir.
 - **Une impression à la fois** par imprimante (verrou interne).
 - **Pas de compression** : une image de 200 lignes envoie 14,4 Ko utiles.
-- **Texte** : police bitmap par défaut de Pillow (aucune fonte embarquée). Le rendu
-  TrueType multi-polices est prévu.
+- **Texte** : une seule fonte, grasse et embarquée dans l'intégration (`DejaVu Sans Condensed
+  Bold`, licence Bitstream Vera — voir `fonts/LICENSE-DejaVu.txt`). Le choix d'une police par
+  l'utilisateur n'est pas exposé.
 
 ## Crédits
 

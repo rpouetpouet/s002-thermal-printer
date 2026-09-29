@@ -8,7 +8,7 @@ import re
 
 DOMAIN = "s002_printer"
 NAME = "ORGSTA S002 Thermal Printer"
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 
 # --- Transport BLE -------------------------------------------------------------------
 # L'imprimante expose le service ff00 en DEUX exemplaires (appareil multi-link) ;
