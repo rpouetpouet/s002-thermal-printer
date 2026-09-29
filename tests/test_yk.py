@@ -4,7 +4,7 @@
 Référence = la logique du script `s002_dos_a_dos.py` qui a réellement imprimé « MARVIN »
 (5 trames de 40 lignes, dos à dos) sur l'imprimante le 28/09/2026.
 
-Exécution : /home/batman/.hermes/cache/scratch/snaptag/venv/bin/python tests/test_yk.py
+Exécution : /home/batman/venvs/printer/bin/python tests/test_yk.py
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ verifier("frame avance 5 mm -> 50 unités", trame[5:7] == struct.pack("<H", 50),
 verifier("compteur modulo 64", yk.build_frame(0x00, b"", 64)[2] == 0)
 
 print("\n=== 2. Découpage en trames : comparaison avec le script ayant imprimé MARVIN")
-raw = pathlib.Path("/home/batman/s002/marvin.raw").read_bytes()
+raw = (pathlib.Path(__file__).resolve().parent / "fixtures" / "marvin.raw").read_bytes()
 verifier("raster de référence = 14 400 o (200 lignes)", len(raw) == 14400, str(len(raw)))
 
 # référence : reproduction exacte de la logique du script Pi validé
