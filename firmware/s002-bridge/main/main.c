@@ -31,6 +31,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
@@ -87,6 +88,41 @@ static int s_svc_nb, s_svc_i;
 static uint16_t s_notify_h[MAX_NOTIFY], s_notify_svc_end[MAX_NOTIFY], s_cccd_h[MAX_NOTIFY];
 static int s_notify_trouves, s_notify_i;
 static bool s_write_handle_confirmee, s_pret_a_imprimer;
+
+/* Diagnostic : sans ces compteurs, un firmware qui attend son peripherique est TOTALEMENT
+ * muet, ce qui est indiagnostiquable a distance (vecu le 29/09/2026 : flash verifie bon,
+ * zero octet a la console, cause reelle = rien a journaliser). */
+static uint32_t s_adv_vus;
+static int8_t s_rssi_max = -127;
+
+/** Cherche le nom annonce (types AD 0x08 = nom abrege, 0x09 = nom complet) et le compare.
+ *  L'imprimante S002 annonce son nom ; sa MAC, elle, est une adresse privee NON RESOLVABLE
+ *  (premier octet 0x06 => bits 7-6 = 00), donc susceptible de changer : filtrer sur la MAC
+ *  seule rend le pont aveugle apres un cycle d'alimentation de l'imprimante. */
+static const char *adv_nom(const uint8_t *data, uint8_t len, char *tampon, size_t taille)
+{
+    uint8_t i = 0;
+    while (i + 1 < len) {
+        uint8_t l = data[i];
+        if (l == 0) {
+            break;
+        }
+        if (i + 1 + l > len) {
+            break;
+        }
+        uint8_t type = data[i + 1];
+        if (type == 0x08 || type == 0x09) {
+            size_t n = (l - 1) < (taille - 1) ? (l - 1) : (taille - 1);
+            memcpy(tampon, &data[i + 2], n);
+            tampon[n] = '\0';
+            return tampon;
+        }
+        i += l + 1;
+    }
+    return NULL;
+}
+
+static uint32_t s_noms_journalises;
 
 /* --------------------------------------------------------------------------------------
  * Statistiques d'écriture
@@ -292,7 +328,10 @@ static int dsc_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
     }
     if (dsc->uuid.u.type == BLE_UUID_TYPE_16 &&
         ble_uuid_u16((const ble_uuid_t *)&dsc->uuid) == CCCD_UUID16) {
-        if (s_notify_i < MAX_NOTIFY) {
+        /* On garde le PREMIER CCCD de la plage : la plage va jusqu'a la fin du service, donc
+         * ecraser a chaque trouvaille faisait retenir le CCCD d'une AUTRE caracteristique
+         * (observe le 29/09 : 0x000e et 0x0013 pointaient tous deux sur 0x0014). */
+        if (s_notify_i < MAX_NOTIFY && s_cccd_h[s_notify_i] == 0) {
             s_cccd_h[s_notify_i] = dsc->handle;
         }
     }
@@ -389,20 +428,25 @@ static void etape_suivante(void)
 
     case ST_SUB: {
         /* Abonnement aux notifications : on écrit sur le descripteur CCCD.
-         * Il n'existe PAS de fonction `ble_gattc_subscribe` dans NimBLE. */
-        if (s_notify_i < s_notify_trouves) {
+         * Il n'existe PAS de fonction `ble_gattc_subscribe` dans NimBLE.
+         * ⚠️ Cette branche est appelée UNE fois (depuis le dernier `BLE_HS_EDONE`) : elle doit
+         * donc BOUCLER sur tous les descripteurs. Sans la boucle, un seul abonnement était
+         * traité et l'impression ne démarrait jamais (bug constate le 29/09/2026). */
+        while (s_notify_i < s_notify_trouves) {
             if (s_cccd_h[s_notify_i] != 0) {
                 const uint8_t cccd_val[2] = {0x01, 0x00}; /* notifications activees */
                 ESP_LOGI(TAG, "  abonnement notify 0x%04x (CCCD 0x%04x)", s_notify_h[s_notify_i],
                          s_cccd_h[s_notify_i]);
                 ble_write_block(s_cccd_h[s_notify_i], cccd_val, 2, false);
+            } else {
+                ESP_LOGW(TAG, "  notify 0x%04x sans CCCD : pas d'abonnement possible",
+                         s_notify_h[s_notify_i]);
             }
             s_notify_i++;
-        } else {
-            ESP_LOGI(TAG, "  abonnements termines — pret a imprimer");
-            s_pret_a_imprimer = true;
-            s_state = ST_PRINT;
         }
+        ESP_LOGI(TAG, "  abonnements termines — pret a imprimer");
+        s_pret_a_imprimer = true;
+        s_state = ST_PRINT;
         break;
     }
     default:
@@ -420,13 +464,43 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     (void)arg;
     switch (event->type) {
     case BLE_GAP_EVENT_DISC: {
-        /* L'adresse est localement administrée : on prend le TYPE annoncé au lieu de le
-         * supposer (un central en `public` échoue sans message clair). */
-        if (memcmp(event->disc.addr.val, s_target.val, 6) != 0) {
+        s_adv_vus++;
+        if (event->disc.rssi > s_rssi_max) {
+            s_rssi_max = event->disc.rssi;
+        }
+
+        char nom[40];
+        const char *nom_vu = adv_nom(event->disc.data, event->disc.length_data, nom, sizeof(nom));
+
+        bool mac_correspond = memcmp(event->disc.addr.val, s_target.val, 6) == 0;
+        bool nom_correspond = nom_vu && strcmp(nom_vu, CONFIG_S002_NOM) == 0;
+
+        if (!mac_correspond && !nom_correspond) {
+            /* Trace des appareils NOMMES : indispensable pour diagnostiquer « l'imprimante
+             * n'est pas vue » (est-elle eteinte ? son adresse a-t-elle change ?). */
+            if (nom_vu && s_noms_journalises < 15) {
+                s_noms_journalises++;
+                ESP_LOGI(TAG, "  annonce nommee : \"%s\" %02X:%02X:%02X:%02X:%02X:%02X RSSI %d",
+                         nom_vu, event->disc.addr.val[5], event->disc.addr.val[4],
+                         event->disc.addr.val[3], event->disc.addr.val[2], event->disc.addr.val[1],
+                         event->disc.addr.val[0], event->disc.rssi);
+            }
             return 0;
         }
-        ESP_LOGI(TAG, "imprimante trouvee : RSSI %d dBm, type d'adresse %s", event->disc.rssi,
+
+        ESP_LOGW(TAG, "IMPRIMANTE TROUVEE (%s) : %02X:%02X:%02X:%02X:%02X:%02X RSSI %d dBm, "
+                      "type d'adresse %s",
+                 nom_correspond ? "par son nom" : "par sa MAC", event->disc.addr.val[5],
+                 event->disc.addr.val[4], event->disc.addr.val[3], event->disc.addr.val[2],
+                 event->disc.addr.val[1], event->disc.addr.val[0], event->disc.rssi,
                  event->disc.addr.type == BLE_ADDR_RANDOM ? "random" : "public");
+        if (!mac_correspond) {
+            /* On mémorise la nouvelle adresse : c'est celle qu'il faudra retenir si elle a
+             * changé depuis le dernier appairage. */
+            memcpy(s_target.val, event->disc.addr.val, 6);
+            ESP_LOGW(TAG, "  adresse differente de la MAC configuree : le S002 a change "
+                          "d'adresse (NRPA). Nouvelle adresse retenue pour cette session.");
+        }
         s_target.type = event->disc.addr.type;
         ble_gap_disc_cancel();
 
@@ -563,6 +637,16 @@ static void host_task(void *param)
 
 static void on_sync(void)
 {
+    /* La raison du dernier reset est le premier diagnostic utile : elle dit si l'appli a
+     * demarre proprement (POWERON) ou si elle tourne en boucle de plantage (PANIC/WDT). */
+    esp_reset_reason_t raison = esp_reset_reason();
+    static const char *noms[] = {"INCONNUE",   "POWERON",  "EXT",        "SW",       "PANIC",
+                                 "INT_WDT",    "TASK_WDT", "WDT",        "DEEPSLEEP", "BROWNOUT",
+                                 "SDIO",       "USB",      "JTAG",       "EFUSE",    "PWR_GLITCH",
+                                 "CPU_LOCKUP"};
+    ESP_LOGW(TAG, "raison du dernier reset : %s (%d)%s", (raison >= 0 && raison <= 15) ? noms[raison] : "?",
+             (int)raison, (raison == ESP_RST_PANIC || raison == ESP_RST_TASK_WDT) ?
+             "  <-- PLANTAGE : voir le log ci-dessus" : "");
     int rc = ble_hs_util_ensure_addr(0);
     ESP_LOGI(TAG, "pile BLE synchronisee (ensure_addr rc=%d)", rc);
     start_scan();
@@ -633,9 +717,19 @@ void app_main(void)
     ble_hs_cfg.sync_cb = on_sync;
     nimble_port_freertos_init(host_task);
 
-    /* Attend que la découverte et les abonnements soient terminés, puis imprime UNE fois. */
+    ESP_LOGI(TAG, "memoire libre : %u octets", (unsigned)esp_get_free_heap_size());
+
+    /* Attend que la découverte et les abonnements soient terminés, puis imprime UNE fois.
+     * Battement de coeur toutes les 5 s : sans lui, un firmware qui attend son peripherique
+     * n'affiche rien et devient indiagnostiquable a distance. */
+    int battements = 0;
     while (!s_pret_a_imprimer) {
         vTaskDelay(pdMS_TO_TICKS(200));
+        if (++battements % 25 == 0) {
+            ESP_LOGI(TAG, "[%d s] en attente de l'imprimante : %u annonces BLE vues, "
+                          "meilleur RSSI %d dBm",
+                     battements / 5, (unsigned)s_adv_vus, s_rssi_max);
+        }
     }
     vTaskDelay(pdMS_TO_TICKS(300));
 

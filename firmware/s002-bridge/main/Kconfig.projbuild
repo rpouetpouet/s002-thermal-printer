@@ -13,6 +13,14 @@ menu "S002 bridge (v0)"
     config S002_PRINTER_MAC
         string "Adresse MAC de l'imprimante"
         default "06:03:DD:EC:16:4D"
+        help
+            Adresse vue le 28/09/2026. ATTENTION : c'est une adresse privee NON RESOLVABLE,
+            donc susceptible d'etre regeneree par l'imprimante. La recherche se fait AUSSI par
+            nom (voir S002_NOM), qui est le critere robuste.
+
+    config S002_NOM
+        string "Nom annonce par l'imprimante (critere principal)"
+        default "S002"
 
     config S002_WRITE_HANDLE
         hex "Handle d'écriture (ff02, instance service000c)"

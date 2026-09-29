@@ -26,6 +26,12 @@ CONFIG_BT_NIMBLE_TRANSPORT_ACL_SIZE=255
 # l'arbitrage Wi-Fi/BLE est piloté par logiciel (multiplexage temporel).
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
 
+# --- Console -----------------------------------------------------------------------
+# ⚠️ Par défaut la console va sur UART0 (broches GPIO20/21) : sur une carte dont seule la
+# prise USB-C est branchée, on ne voit RIEN alors que la ROM, elle, répond bien (le flash
+# fonctionne mais aucun log applicatif n'apparaît). Vérifié le 29/09/2026.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
 # --- Wi-Fi -------------------------------------------------------------------------
 CONFIG_ESP_WIFI_ENABLED=y
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
