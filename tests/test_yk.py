@@ -54,6 +54,9 @@ verifier("frame largeur 576 -> 40 02 en LE", trame == attendu, trame.hex(" "))
 
 trame = yk.frame_feed(5.0, 2)
 verifier("frame avance 5 mm -> 50 unités", trame[5:7] == struct.pack("<H", 50), trame.hex(" "))
+# Échelle validée à la règle sur papier : 150 unités = 15,0 mm mesurés.
+verifier("frame avance 15 mm -> 150 unités (échelle validée sur papier)",
+         yk.frame_feed(15.0, 3)[5:7] == struct.pack("<H", 150), yk.frame_feed(15.0, 3).hex(" "))
 
 verifier("compteur modulo 64", yk.build_frame(0x00, b"", 64)[2] == 0)
 

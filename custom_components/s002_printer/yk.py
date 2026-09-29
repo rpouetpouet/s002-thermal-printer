@@ -111,7 +111,12 @@ def frame_paper_size(width_dots: int = PRINT_WIDTH_DOTS, counter: int = 0) -> by
 
 
 def frame_feed(mm: float, counter: int = 0) -> bytes:
-    """Avance papier : 50 unités ≈ 5 mm, soit ≈ 0,1 mm par unité (uint16 LE)."""
+    """Avance papier, en unités de 0,1 mm (uint16 LE).
+
+    Échelle vérifiée à la règle sur le papier : une trame de 150 unités (15 mm demandés) produit
+    une avance mesurée de 15,0 mm. Attention à la façon de mesurer : le PAS se prend entre deux
+    bords homologues ; l'écart visuel entre deux traits est plus court d'une épaisseur de trait.
+    """
     units = int(round(mm * FEED_UNITS_PER_MM))
     if not 0 < units <= 0xFFFF:
         raise ValueError(f"avance hors bornes : {mm} mm")

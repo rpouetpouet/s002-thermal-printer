@@ -69,7 +69,10 @@ SETTLE_AFTER_WIDTH_MS = 400
 FRAME_START = 0x64
 FRAME_END = 0x9B
 
-# Encodage de l'avance papier : 50 unités ≈ 5 mm.
+# Encodage de l'avance papier : 10 unités/mm. Échelle VÉRIFIÉE À LA RÈGLE sur papier : une trame
+# de 150 unités produit une avance de 15,0 mm. Mesurer le PAS entre deux bords homologues (coin
+# supérieur gauche à coin supérieur gauche) : l'écart visuel entre deux traits est plus court,
+# d'une épaisseur de trait, ce qui fait croire à une échelle fausse.
 FEED_UNITS_PER_MM = 10
 
 CONF_ADDRESS = "address"
