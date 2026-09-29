@@ -74,6 +74,42 @@ action:
 | `frame_pause_ms` | 0 | Pause entre trames (≤ 400 ms, sinon blanc garanti) |
 | `feed_before_mm` / `feed_after_mm` | 0 | Marges d'avance autour de l'image |
 
+### Choisir le transport : `proxy` (BLE) ou `node` (réseau)
+
+Deux transports interchangeables, réglés par les **options** de l'intégration (bouton
+*Configurer* sur la fiche de l'appareil) :
+
+| Option | Défaut | Rôle |
+| --- | --- | --- |
+| `transport` | `proxy` | `proxy` = via un proxy Bluetooth ESP32 de Home Assistant ; `node` = via un nœud d'impression dédié, sur le réseau |
+| `node_host` | *(vide)* | Adresse du nœud — **l'IP ou le nom d'hôte seul**, sans libellé (voir le piège) |
+| `node_port` | `3333` | Port TCP du nœud |
+
+Pourquoi le nœud : un ESP32-C3 posé près de l'imprimante écrit en BLE directement
+(≈ 13 ms par écriture, contre 54 à 116 ms via un proxy) et expose ces écritures sur un
+serveur TCP. Une page de 93 mm part en ≈ 2 s, et une ligne de texte depuis Home Assistant
+en ≈ 1 s. Le nœud reste volontairement *bête* : il ne connaît ni le protocole YK ni la
+rasterisation, il écrit les octets qu'on lui donne et gère le contrôle de flux par crédits.
+
+⚠️ **Piège de saisie** : ne pas recopier une ligne de configuration YAML dans le champ.
+`node_host: 192.168.42.62` (libellé compris) devient un nom d'hôte invalide →
+`Name does not resolve`, message qui ne désigne pas la cause. La valeur attendue est
+`192.168.42.62`. Depuis la v0.2.1 le libellé, les guillemets et un `:port` collé sont
+retirés automatiquement, et un avertissement est journalisé — mais autant saisir la bonne valeur.
+
+**Vérifier le transport réellement utilisé** : les deux chemins réussissent une impression,
+donc un succès ne dit pas par où la page est passée. Le nœud expose un compteur de son côté :
+
+```bash
+python3 tools/s002_node_client.py 192.168.42.62 statut     # relever « ecritures »
+# faire l'impression, puis relever à nouveau : le compteur doit avoir augmenté.
+```
+
+Compteur figé = la page est passée par le proxy, pas par le nœud.
+
+`diagnose` suit le transport configuré et, en cas d'échec, **renvoie** un rapport
+(`ok: false`, `erreur`, transport visé) au lieu de lever une exception.
+
 ## Robustesse du transport (v0.1.8)
 
 Deux protections, nées de mesures sur le matériel — sans elles, une impression **réussie**

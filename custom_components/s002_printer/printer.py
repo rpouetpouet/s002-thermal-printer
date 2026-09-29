@@ -28,6 +28,7 @@ from . import yk
 from .ble import S002Transport, S002Error
 from .const import (
     DEFAULT_CHUNK_SIZE,
+    normaliser_hote_node,
     DEFAULT_NODE_PORT,
     DEFAULT_TRANSPORT,
     DEFAULT_FRAME_PAUSE_MS,
@@ -101,8 +102,21 @@ class S002Printer:
         self.feed_before_mm = feed_before_mm
         self.feed_after_mm = feed_after_mm
         self.transport = transport
-        self.node_host = (node_host or "").strip()
-        self.node_port = int(node_port)
+        self.node_host, port_colle = normaliser_hote_node(node_host)
+        # Un « :port » collé à l'adresse l'emporte sur l'option dédiée (c'est une saisie
+        # explicite de l'utilisateur), sinon le sélecteur numérique de HA renvoie un float.
+        self.node_port = int(port_colle if port_colle is not None else node_port)
+        if self.transport == TRANSPORT_NODE and self.node_host:
+            if self.node_host != (node_host or "").strip():
+                _LOGGER.warning(
+                    "S002 %s : adresse de nœud corrigée de %r en %r (libellé, guillemets ou "
+                    "port dans l'option « node_host »)", address, node_host, self.node_host,
+                )
+            if " " in self.node_host or "/" in self.node_host:
+                _LOGGER.warning(
+                    "S002 %s : adresse de nœud invraisemblable %r — attendu une IP ou un nom "
+                    "d'hôte, sans libellé", address, self.node_host,
+                )
 
     def _creer_transport(self, forcer_ble: bool = False):
         """Fabrique le transport à utiliser pour cette impression.
@@ -278,17 +292,29 @@ class S002Printer:
                 await transport.disconnect()
         return resultat
 
-    async def diagnose(self) -> dict:
+    async def diagnose(self, forcer_ble: bool = False) -> dict:
         """Connexion sans impression : révèle quels canaux et crédits le lien expose.
 
-        Sert de premier test depuis un proxy BLE : si les canaux `ff02` et les crédits
-        de flux apparaissent, le passage par proxy est fonctionnel.
+        Utilise le transport **configuré** (nœud ou proxy) : interroger systématiquement le
+        BLE échoue dès que le nœud occupe l'imprimante — elle n'accepte qu'un client — et
+        laisse croire à une panne d'un autre genre.
+
+        En cas d'échec, on **rend** le rapport d'erreur au lieu de lever : le service répond
+        un diagnostic exploitable (« nœud injoignable ») plutôt qu'un 500 opaque.
         """
-        transport = self._creer_transport(forcer_ble=True)
-        await transport.connect()
+        transport = self._creer_transport(forcer_ble=forcer_ble)
+        nom = "proxy" if forcer_ble else self.transport
+        contexte = {"transport": nom, "node_host": self.node_host, "node_port": self.node_port}
+        try:
+            await transport.connect()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "S002 %s : diagnostic impossible via le transport %s — %s", self.address, nom, err
+            )
+            return {**contexte, "ok": False, "erreur": f"{type(err).__name__}: {err}"}
         try:
             # on ne consomme aucun papier : simple lecture de l'état annoncé
             await asyncio.sleep(6)   # l'imprimante pousse une trame d'état toutes les 5 s
-            return transport.stats.as_dict()
+            return {**transport.stats.as_dict(), **contexte, "ok": True}
         finally:
             await transport.disconnect()

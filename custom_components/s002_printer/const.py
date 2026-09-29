@@ -4,9 +4,11 @@ Toutes les valeurs proviennent de mesures réelles sur le matériel (voir le ski
 `orgsta-s002-printer`) et non d'une documentation constructeur.
 """
 
+import re
+
 DOMAIN = "s002_printer"
 NAME = "ORGSTA S002 Thermal Printer"
-VERSION = "0.1.0"
+VERSION = "0.2.1"
 
 # --- Transport BLE -------------------------------------------------------------------
 # L'imprimante expose le service ff00 en DEUX exemplaires (appareil multi-link) ;
@@ -93,3 +95,30 @@ TRANSPORTS = (TRANSPORT_PROXY, TRANSPORT_NODE)
 CONF_NODE_HOST = "node_host"
 CONF_NODE_PORT = "node_port"
 DEFAULT_NODE_PORT = 3333
+
+# Un libellé recopié depuis un fichier de configuration (« node_host: 192.168.42.62 »),
+# des guillemets ou un « :port » collé se glissent facilement dans un champ de formulaire.
+_PREFIXE_HOTE = re.compile(
+    r"^\s*(?:node[_-]?host|h[oô]te?|host|adresse)\s*[=:]\s*", re.IGNORECASE
+)
+_PORT_COLLE = re.compile(r"^(?P<hote>[^:/\s]+):(?P<port>\d{1,5})$")
+
+
+def normaliser_hote_node(valeur: object) -> tuple[str, int | None]:
+    """Nettoie l'adresse de nœud saisie par l'utilisateur.
+
+    Sans ce nettoyage, recopier « node_host: 192.168.42.62 » dans le champ donne un hôte
+    qui n'existe pas : l'impression échoue en « Name does not resolve », message qui ne
+    désigne pas la vraie cause (on a cherché ailleurs dans un premier temps).
+
+    Renvoie l'hôte nettoyé et, si l'utilisateur a collé « hôte:port », le port à utiliser.
+    """
+    texte = str(valeur or "")
+    for _ in range(2):        # un libellé peut précéder des guillemets, et inversement
+        texte = texte.strip().strip("\"'").strip()
+        texte = _PREFIXE_HOTE.sub("", texte, count=1)
+    port: int | None = None
+    correspondance = _PORT_COLLE.match(texte)
+    if correspondance:
+        texte, port = correspondance.group("hote"), int(correspondance.group("port"))
+    return texte.strip(), port
