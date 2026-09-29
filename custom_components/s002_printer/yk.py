@@ -301,13 +301,21 @@ def image_to_raster(
     invert: bool = False,
     width_dots: int = PRINT_WIDTH_DOTS,
     enhance: bool = False,
+    gamma: float = 1.0,
 ) -> bytes:
     """Convertit une image (PNG/JPEG/…) en raster 1 bit pour l'imprimante.
 
     `dither=False` : seuillage franc (net, adapté au texte et aux traits).
     `dither=True`  : tramage Floyd-Steinberg (utile pour les photos).
     `enhance=True` : prépare une photo avant de la réduire — étalement des niveaux
-    (`autocontrast`) puis accentuation des contours (`UnsharpMask`).
+    (`autocontrast`), correction de tons (`gamma`), puis accentuation des contours (`UnsharpMask`).
+
+    `gamma` compense le **gain de point** du papier thermique : chaque point imprimé ressort plus gros
+    que sa taille nominale, donc une zone tramée paraît plus sombre que sa valeur en données. Mesuré
+    sur une photo au ciel clair : 29,6 % de points noirs sans correction, 27,0 % à `gamma=0.85`,
+    25,0 % à 0,75, 22,8 % à 0,65. **`0.85` est le réglage retenu par Rich** après comparaison sur
+    papier : `< 1` éclaircit, `> 1` assombrit. Appliqué après l'étalement et avant l'accentuation —
+    l'ordre compte.
 
     ⚠️ `enhance` est devenu le défaut côté service `print_image` (29/09/2026, variante A retenue par
     Rich après comparaison sur papier). La raison : une photo au ciel clair avec un sujet blanc donne,
@@ -326,6 +334,8 @@ def image_to_raster(
         img = source.convert("L")
         if enhance:
             img = ImageOps.autocontrast(img, cutoff=1)
+            if gamma and gamma != 1.0:
+                img = img.point(lambda p: int(255 * (p / 255.0) ** gamma))
             img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
         if img.width != width_dots:
             hauteur = max(1, round(img.height * width_dots / img.width))

@@ -140,6 +140,13 @@ C'est le rendu retenu après comparaison sur papier : une photo au ciel clair av
 sans étalement des niveaux, la même bouillie de points partout — perçu à tort comme un manque de
 résolution. `enhance: false` imprime l'image telle quelle, `dither: false` force le seuil franc.
 
+L'option `gamma` corrige la **densité** (défaut `0.85`). Elle existe parce que le papier thermique a du
+**gain de point** : chaque point imprimé ressort plus gros que sa taille nominale, donc une zone tramée
+paraît plus sombre que sa valeur en données. Mesuré sur une photo au ciel clair, en pourcentage de
+points noirs : **29,6 %** sans correction, **27,0 %** à `gamma=0.85`, 25,0 % à 0,75, 22,8 % à 0,65.
+Le réglage `0.85` est celui retenu après comparaison des quatre sur papier. En dessous de 1 la photo
+s'éclaircit, au-dessus elle s'assombrit.
+
 Une image **déjà en noir et blanc franc** (QR code, tracé, texte scanné) n'est **jamais** tramée, même
 si le tramage est demandé : le tramage y détruirait la lisibilité. La détection est automatique.
 

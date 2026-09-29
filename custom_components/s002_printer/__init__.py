@@ -241,6 +241,9 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 # le seuil franc ; `enhance: false` pour imprimer l'image telle quelle.
                 dither=call.data.get("dither", True),
                 enhance=call.data.get("enhance", True),
+                # 0.85 = réglage retenu par Rich après comparaison de 4 densités sur papier (27,0 %
+                # d'encre contre 29,6 % sans correction) : compense le gain de point du papier.
+                gamma=call.data.get("gamma", 0.85),
                 invert=call.data.get("invert", False),
             )
         except Exception as err:  # noqa: BLE001

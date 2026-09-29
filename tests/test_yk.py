@@ -211,6 +211,20 @@ try:
     # (c) photo : tramage et seuil franc doivent bien différer, sinon le garde-fou est trop large
     d = yk.image_to_raster(_png(photo), dither=False, enhance=True)
     verifier("photo : tramage != seuil franc (garde-fou non déclenché à tort)", d != avec)
+
+    # (d) correction de tons : compense le gain de point du papier thermique.
+    # 0,85 = réglage retenu par Rich après comparaison de 4 densités sur papier.
+    def _encre(r: bytes) -> int:
+        return sum(bin(octet).count("1") for octet in r)
+
+    g100 = yk.image_to_raster(_png(photo), dither=True, enhance=True, gamma=1.0)
+    g085 = yk.image_to_raster(_png(photo), dither=True, enhance=True, gamma=0.85)
+    g065 = yk.image_to_raster(_png(photo), dither=True, enhance=True, gamma=0.65)
+    verifier("gamma 0,85 éclaircit par rapport à 1,00 (réglage retenu)",
+             _encre(g085) < _encre(g100), f"{_encre(g085)} vs {_encre(g100)}")
+    verifier("gamma 0,65 éclaircit encore (le réglage va dans le bon sens)",
+             _encre(g065) < _encre(g085), f"{_encre(g065)} vs {_encre(g085)}")
+    verifier("gamma n'altère pas la géométrie", len(g085) == len(g100))
 except ImportError:
     print("  (Pillow absent : tests de préparation ignorés)")
 
