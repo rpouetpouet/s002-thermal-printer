@@ -10,6 +10,60 @@ des images depuis HA — automatisations, scripts, dashboard — **via la pile B
 Home Assistant**, donc **à travers un proxy BLE ESP32** (`bluetooth_proxy: active: true`)
 ou un adaptateur local, sans code spécifique.
 
+## Comment ça marche
+
+**L'imprimante ne parle pas ESC/POS.** Les commandes classiques n'ont aucun effet sur cette S002 :
+son protocole (**YK/CUS**) a été décodé depuis `libykDataPacket.so` de l'application Android. Une
+trame, c'est :
+
+```
+0x64 | type | compteur (mod 64) | longueur LE16 | données | contrôle 32 bits | 0x9b
+```
+
+L'imprimante est binaire : **576 points de large, 72 octets par ligne, 1 = noir, bit de poids fort
+en premier**.
+
+### Le déroulé d'une impression
+
+1. un **verrou par imprimante** — deux impressions simultanées s'entrelaceraient ;
+2. ouverture du transport, puis la séquence obligatoire : **token** (compteur 1) → **largeur**
+   (compteur 2, l'imprimante en déduit 72 o/ligne) → **tranches d'image** → avance finale ;
+3. chaque tranche embarque 8 lignes, et sa taille est **recalculée après chaque trame** à partir du
+   pic de latence récent. C'est la correction d'un vrai bug : la latence du chemin Bluetooth varie
+   du simple au triple, une trame de taille fixe finissait par dépasser la tolérance de pause de
+   l'imprimante (~400 ms), qui **refermait la tâche et avalait 4 mm de blanc** ;
+4. déconnexion, puis compte rendu (trames, octets, durée, latences).
+
+### Le contrôle de flux par crédits
+
+C'est le cœur du sujet. L'imprimante n'accepte qu'un petit nombre de paquets, puis en redonne :
+elle envoie une notification qui vaut « N paquets autorisés ». Le transport compte les crédits,
+décrémente à chaque écriture et **attend** quand il n'en a plus. Sans cette comptabilité, le raster
+partait plus vite que sa mémoire ne le consommait — c'est ce qui faisait **manger des lignes**.
+
+### Les deux transports, interchangeables
+
+| | `proxy` (Bluetooth) | `node` (réseau) |
+| --- | --- | --- |
+| Chemin | pile Bluetooth de Home Assistant, via un proxy ESP32 | ESP32-C3 près de l'imprimante, serveur TCP |
+| Coût d'une écriture | ~54 à 116 ms selon le proxy | **~13 ms** |
+| Page de 93 mm | ~9 s | **~2 s** |
+
+Détail qui a compté côté Bluetooth : le sélecteur intégré de Home Assistant retient le scanner dont
+l'annonce est la **plus récente**, pas la plus forte. Sur ce parc, il passait par un proxy à
+**−99 dBm** au lieu d'un autre à **−84**, ce qui doublait le coût par paquet et provoquait les
+blancs. L'intégration va donc chercher tous les scanners et **trie sur le RSSI**.
+
+Côté réseau, le nœud est volontairement *bête* : il ne connaît ni le protocole YK ni la
+rasterisation, il écrit les octets qu'on lui donne et gère les crédits. C'est ce qui rend les deux
+transports interchangeables — et ce qui a permis de décoder le protocole sur un PC avant même
+d'avoir une imprimante à portée.
+
+### Repères
+
+300 dpi (11,81 points/mm), 48,8 mm imprimables sur du papier de 57 mm, 20 mm/s. La recette de test
+(93 mm) passe en 79 443 octets et 31 trames.
+
 ## Images de marque
 
 L'icône et le logo de l'intégration sont **embarqués dans le dépôt**, dans
