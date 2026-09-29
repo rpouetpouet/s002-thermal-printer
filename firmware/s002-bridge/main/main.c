@@ -915,13 +915,148 @@ static void sur_ip_obtenue(void *arg, esp_event_base_t base, int32_t id, void *d
     }
 }
 
+static esp_netif_t *s_netif;
+
+static const char *s_source_wifi = "aucune";
+static int s_wifi_echecs;
+static int s_derniere_raison_wifi = -1;
+static char s_ssid[33];
+static bool s_balayage_demande;
+static bool s_wifi_init, s_wifi_demarre, s_wifi_associe;
+static int s_dernier_evenement_wifi = -1;
+
+/* Balayage Wi-Fi : la mesure qui tranche. « Pas d'adresse IP » ne dit pas si le reseau cible
+ * est seulement visible depuis l'endroit ou le noeud est pose (le C3 ne fait que du 2,4 GHz :
+ * un reseau en 5 GHz seul est tout simplement invisible). On liste donc ce qui est vu. */
+static void balayer_wifi(void)
+{
+    wifi_scan_config_t cfg = { .show_hidden = false };
+    if (esp_wifi_scan_start(&cfg, true) != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi : balayage impossible");
+        return;
+    }
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    ESP_LOGI(TAG, "Wi-Fi : %u reseau(x) 2,4 GHz visible(s) depuis le noeud", (unsigned)n);
+    if (n > 0) {
+        if (n > 16) {
+            n = 16;
+        }
+        wifi_ap_record_t *aps = calloc(n, sizeof(wifi_ap_record_t));
+        if (aps != NULL && esp_wifi_scan_get_ap_records(&n, aps) == ESP_OK) {
+            for (int i = 0; i < n; i++) {
+                bool le_notre = (s_ssid[0] != '\0')
+                                && (strcmp((const char *)aps[i].ssid, s_ssid) == 0);
+                ESP_LOGI(TAG, "    %s\"%s\" canal %d RSSI %d dBm", le_notre ? ">>> " : "    ",
+                         (const char *)aps[i].ssid, aps[i].primary, aps[i].rssi);
+            }
+        }
+        free(aps);
+    }
+    if (s_ssid[0] != '\0') {
+        ESP_LOGI(TAG, "  reseau recherche : \"%s\"", s_ssid);
+    }
+}
+
+static void tache_balayage(void *param)
+{
+    (void)param;
+    balayer_wifi();
+    vTaskDelete(NULL);
+}
+
+/* Surveillance de demarrage : si aucune adresse IP au bout de 8 s, on VEUT savoir pourquoi (le
+ * reseau cible est-il seulement visible ?). Conditionner ce balayage a un compteur d'echecs
+ * etait une erreur : sans evenement de deconnexion, il ne se declenchait jamais. */
+static void tache_surveillance_reseau(void *param)
+{
+    (void)param;
+    for (int tour = 0; tour < 6 && !s_serveur_demarre; tour++) {
+        vTaskDelay(pdMS_TO_TICKS(8000));
+        if (s_serveur_demarre) {
+            vTaskDelete(NULL);
+            return;
+        }
+        ESP_LOGW(TAG, "Wi-Fi : pas d'adresse IP apres %d s (init=%d demarre=%d associe=%d, "
+                      "dernier evenement=%d) : relance de l'association puis balayage",
+                 8 * (tour + 1), s_wifi_init, s_wifi_demarre, s_wifi_associe,
+                 s_dernier_evenement_wifi);
+        esp_wifi_connect();
+        balayer_wifi();
+    }
+    vTaskDelete(NULL);
+}
+
+/* Evenements Wi-Fi. Le CODE DE RAISON est l'information decisive :
+ *   15  = mot de passe refuse (handshake)
+ *   201 = point d'acces introuvable (hors portee, ou reseau uniquement en 5 GHz — le C3 ne
+ *         fait que du 2,4 GHz)
+ *   205 = point d'acces sature
+ * Sans lui, « pas d'adresse IP » ne dit pas s'il faut corriger le mot de passe ou demenager
+ * l'antenne : on ne peut que constater. */
+static void sur_evenement_wifi(void *arg, esp_event_base_t base, int32_t id, void *donnees)
+{
+    (void)arg;
+    (void)base;
+    s_dernier_evenement_wifi = (int)id;
+    if (id == WIFI_EVENT_STA_START) {
+        ESP_LOGI(TAG, "Wi-Fi : interface prete -> demande d'association");
+        esp_wifi_connect();
+    } else if (id == WIFI_EVENT_STA_CONNECTED) {
+        s_wifi_associe = true;
+        ESP_LOGI(TAG, "Wi-Fi : associe (attente du bail DHCP)");
+    } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
+        const wifi_event_sta_disconnected_t *e = (const wifi_event_sta_disconnected_t *)donnees;
+        s_wifi_associe = false;
+        s_wifi_echecs++;
+        s_derniere_raison_wifi = (int)e->reason;
+        /* On ne journalise pas les tentatives a l'infini : les 5 premieres suffisent a
+         * diagnostiquer, ensuite on espace pour ne pas noyer le journal. */
+        if (s_wifi_echecs <= 5 || s_wifi_echecs % 20 == 0) {
+            ESP_LOGW(TAG, "Wi-Fi : association ECHOUEE, raison %d (essai %d)",
+                     (int)e->reason, s_wifi_echecs);
+        }
+        if (s_wifi_echecs == 5 && !s_balayage_demande) {
+            s_balayage_demande = true;
+            /* Une seule fois : au-dela, le balayage lui-meme perturbe les tentatives. */
+            xTaskCreate(tache_balayage, "balayage_wifi", 4096, NULL, 4, NULL);
+        }
+        if (s_wifi_echecs < 100) {
+            esp_wifi_connect();  /* une coupure passagere ne doit pas laisser le noeud muet */
+        }
+    }
+}
+
+/* Etat reseau, journalisable A TOUT MOMENT. La ligne unique du demarrage ne suffit pas : une
+ * capture qui s'attache apres le boot ne la voit jamais, et on se retrouve a ne pas savoir si
+ * le noeud a une adresse IP ou non (vecu le 29/09/2026). */
+static void journal_reseau(void)
+{
+    char ip_txt[16] = "aucune";
+    if (s_netif != NULL) {
+        esp_netif_ip_info_t ip = {0};
+        if (esp_netif_get_ip_info(s_netif, &ip) == ESP_OK && ip.ip.addr != 0) {
+            esp_ip4addr_ntoa(&ip.ip, ip_txt, sizeof ip_txt);
+        }
+    }
+    ESP_LOGI(TAG, "reseau : identifiants=%s ip=%s serveur=%s (port %d), imprimante=%s",
+             s_source_wifi, ip_txt, s_serveur_demarre ? "en ecoute" : "inactif",
+             CONFIG_S002_PORT_TCP, s_pret_a_imprimer ? "prete" : "pas trouvee");
+    ESP_LOGI(TAG, "reseau : wifi init=%d demarre=%d associe=%d evenement=%d echecs=%d raison=%d",
+             s_wifi_init, s_wifi_demarre, s_wifi_associe, s_dernier_evenement_wifi,
+             s_wifi_echecs, s_derniere_raison_wifi);
+}
+
 static void wifi_start(void)
 {
     char ssid[33] = {0}, pass[65] = {0};
     /* NVS d'abord (provisionnement sur place), Kconfig ensuite (banc de mesure). */
     if (nvs_lire_wifi(ssid, sizeof ssid, pass, sizeof pass)) {
-        ESP_LOGI(TAG, "Wi-Fi : identifiants lus en NVS");
+        s_source_wifi = "NVS";
+        ESP_LOGI(TAG, "Wi-Fi : identifiants lus en NVS (SSID de %u caracteres)",
+                 (unsigned)strlen(ssid));
     } else {
+        s_source_wifi = "Kconfig";
         strncpy(ssid, CONFIG_S002_WIFI_SSID, sizeof ssid - 1);
         strncpy(pass, CONFIG_S002_WIFI_PASSWORD, sizeof pass - 1);
     }
@@ -938,19 +1073,25 @@ static void wifi_start(void)
 
     /* Nom DHCP : le noeud apparait sous un nom lisible dans la liste des baux, ce qui evite
      * d'avoir a retrouver son IP au hasard. */
-    esp_netif_t *netif = esp_netif_create_default_wifi_sta();
-    esp_netif_set_hostname(netif, "s002-noeud");
+    s_netif = esp_netif_create_default_wifi_sta();
+    esp_netif_set_hostname(s_netif, "s002-noeud");
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                               sur_ip_obtenue, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                              sur_evenement_wifi, NULL));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    s_wifi_init = true;
+    strncpy(s_ssid, ssid, sizeof s_ssid - 1);
     wifi_config_t wc = {0};
     strncpy((char *)wc.sta.ssid, ssid, sizeof(wc.sta.ssid) - 1);
     strncpy((char *)wc.sta.password, pass, sizeof(wc.sta.password) - 1);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());
+    s_wifi_demarre = true;
+    xTaskCreate(tache_surveillance_reseau, "surveillance_reseau", 4096, NULL, 4, NULL);
 
     /* Pas de modem sleep : carte alimentée, et le power save Wi-Fi est la première cause de
      * pics de latence — donc de blancs. */
@@ -1098,6 +1239,7 @@ void app_main(void)
             ESP_LOGI(TAG, "[%d s] en attente de l'imprimante : %u annonces BLE vues, "
                           "meilleur RSSI %d dBm",
                      battements / 5, (unsigned)s_adv_vus, s_rssi_max);
+            journal_reseau();
         }
     }
     vTaskDelay(pdMS_TO_TICKS(300));
@@ -1122,6 +1264,7 @@ void app_main(void)
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(30000));
+        journal_reseau();
         stats_report();
     }
 }

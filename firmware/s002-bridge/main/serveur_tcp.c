@@ -84,7 +84,11 @@ static void traiter_ligne(int fd, char *ligne)
 
 static void traiter_client(int fd)
 {
-    uint8_t tampon[TAILLE_TAMPON];
+    /* STATIQUE et non local : 4 Ko sur la pile d'une tache de 5 Ko la fait deborder des le
+     * premier client (constate : « Guru Meditation Error: Stack protection fault » dans la
+     * tache « serveur_tcp », puis redemarrage de la carte et connexion TCP reinitialisee).
+     * Le partage est sans risque : UN SEUL client est servi a la fois (invariant du module). */
+    static uint8_t tampon[TAILLE_TAMPON];
     char ligne[TAILLE_LIGNE];
     size_t n_ligne = 0;
     bool binaire = false;
