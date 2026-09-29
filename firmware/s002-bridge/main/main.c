@@ -1389,20 +1389,34 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
         /* `batterie=-1` = aucune trame d'etat recue depuis le demarrage (l'imprimante les
          * pousse toutes les 5 s quand la liaison est tenue). `etats=` permet de distinguer
          * « aucune trame » de « trames recues mais charge illisible ». */
-        snprintf(reponse, taille,
-                 "etat=%s liaison=%s mode=%s maintien=%s batterie=%d etats=%u partition=%s "
-                 "inactif=%llds liberation=%ds paquets=%d autorises=%d credits=%d attentes=%d "
-                 "timeouts=%d ecritures=%u annonces=%u rssi=%d memoire=%u reset=%s uptime=%us",
-                 s_pret_a_imprimer ? "pret" : "attente",
-                 s_conn_handle != BLE_HS_CONN_HANDLE_NONE ? "tenue" : "libre",
-                 s_maintien ? "manuel" : "auto", s_maintien ? "oui" : "non",
-                 s_batterie_pct, (unsigned)s_etats_vus,
-                 esp_ota_get_running_partition()->label,
-                 (long long)(inactif_us / 1000000), s_liberation_auto_s, s_paquets,
-                 s_paquets_autorises, s_credits, s_flux_attentes, s_flux_timeouts,
-                 (unsigned)s_write_count, (unsigned)s_adv_vus, s_rssi_max,
-                 (unsigned)esp_get_free_heap_size(), raison_redemarrage(),
-                 (unsigned)(esp_timer_get_time() / 1000000));
+        /* `reset=` et `uptime=` sont places EN TETE volontairement. Ils servaient de diagnostic et
+         * se trouvaient en fin de chaine : quand la reponse a depasse le tampon, ce sont eux qui
+         * ont disparu, silencieusement. En tete, un futur depassement coutera des compteurs, pas la
+         * cause du dernier redemarrage. */
+        int ecrits = snprintf(
+            reponse, taille,
+            "reset=%s uptime=%us etat=%s liaison=%s mode=%s maintien=%s batterie=%d etats=%u "
+            "partition=%s inactif=%llds liberation=%ds paquets=%d autorises=%d credits=%d "
+            "attentes=%d timeouts=%d ecritures=%u annonces=%u rssi=%d memoire=%u",
+            raison_redemarrage(), (unsigned)(esp_timer_get_time() / 1000000),
+            s_pret_a_imprimer ? "pret" : "attente",
+            s_conn_handle != BLE_HS_CONN_HANDLE_NONE ? "tenue" : "libre",
+            s_maintien ? "manuel" : "auto", s_maintien ? "oui" : "non",
+            s_batterie_pct, (unsigned)s_etats_vus,
+            esp_ota_get_running_partition()->label,
+            (long long)(inactif_us / 1000000), s_liberation_auto_s, s_paquets,
+            s_paquets_autorises, s_credits, s_flux_attentes, s_flux_timeouts,
+            (unsigned)s_write_count, (unsigned)s_adv_vus, s_rssi_max,
+            (unsigned)esp_get_free_heap_size());
+        /* Une troncature muette a coute des heures de diagnostic : elle devient bruyante. */
+        if (ecrits < 0 || (size_t)ecrits >= taille) {
+            ESP_LOGW(TAG, "STATUS tronque : %d octets necessaires, tampon de %u",
+                     ecrits, (unsigned)taille);
+            size_t place = strlen(reponse);
+            if (place + 12 < taille) {
+                strncat(reponse, " TRONQUE", taille - place - 1);
+            }
+        }
     } else {
         snprintf(reponse, taille, "ERREUR commande_inconnue");
     }

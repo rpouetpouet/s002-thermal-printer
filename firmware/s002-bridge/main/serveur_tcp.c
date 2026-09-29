@@ -68,7 +68,10 @@ static void envoyer_texte(int fd, const char *texte)
  * client qui n'obtient pas de reponse ne peut pas distinguer « occupe » de « plante ». */
 static void traiter_ligne(int fd, char *ligne)
 {
-    char reponse[256] = {0};
+    /* 384 et non 256 : la chaine de STATUS a grandi au fil des versions (ajout de `reset=`, de
+     * `uptime=` et de plusieurs compteurs) et depassait le tampon, tronquee EN SILENCE par
+     * snprintf. La fin perdue etait justement la partie diagnostic. */
+    char reponse[384] = {0};
     strncpy(s_derniere_cmd, ligne, sizeof(s_derniere_cmd) - 1);
 
     /* La commande OTA est traitee ICI, pas dans le rappel : apres la ligne annoncee, le client
