@@ -136,6 +136,29 @@ class S002NodeTransport:
             raise S002Error(f"nœud {self.hote} : connexion fermée pendant {commande}")
         return ligne.decode("utf-8", "replace").strip()
 
+    async def liberer(self) -> str:
+        """Rend l'imprimante à l'instant : un téléphone peut alors s'y connecter.
+
+        ⚠️ Le nœud ne la reprend que sur la prochaine impression (ou par `maintenir(True)`).
+        """
+        return await self._commande("LIBERER")
+
+    async def connecter(self) -> str:
+        """Reprend la liaison avec l'imprimante (réponse `RECHERCHE` ou `DEJA_CONNECTE`)."""
+        return await self._commande("CONNECTER")
+
+    async def maintenir(self, actif: bool) -> str:
+        """Mode manuel (`True`) : le nœud garde la liaison et ignore le délai d'inactivité.
+
+        Mode auto (`False`) : le délai décide. Passer en manuel alors que la liaison est rendue
+        la reprend immédiatement — c'est ce qui rend l'interrupteur honnête.
+        """
+        return await self._commande(f"MAINTENIR {1 if actif else 0}")
+
+    async def regler_liberation(self, secondes: int) -> str:
+        """Règle le délai d'inactivité du nœud (0 = jamais rendre la liaison)."""
+        return await self._commande(f"LIBERATION {int(secondes)}")
+
     async def ping(self) -> bool:
         """Vrai si le nœud répond. Sert de test de disponibilité, sans rien imprimer."""
         return (await self._commande("PING")).upper() == "PONG"

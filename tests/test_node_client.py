@@ -63,10 +63,24 @@ class FakeNoeud:
                 while b"\n" in tampon:
                     ligne, tampon = tampon.split(b"\n", 1)
                     ligne = ligne.strip()
+                    self.derniere_commande = ligne.decode()
                     if ligne == b"PING":
                         conn.sendall(b"PONG\n")
                     elif ligne == b"STATUS":
-                        conn.sendall(b"etat=pret clients=1 octets=0\n")
+                        # Reponse v3 : les champs que l'integration lit (batterie, mode, liaison).
+                        conn.sendall(
+                            b"etat=pret liaison=tenue mode=manuel maintien=oui batterie=47 "
+                            b"etats=12 partition=ota_1 inactif=5s liberation=120s ecritures=0\n"
+                        )
+                    elif ligne == b"LIBERER":
+                        conn.sendall(b"LIBERE\n")
+                    elif ligne == b"CONNECTER":
+                        conn.sendall(b"RECHERCHE\n")
+                    elif ligne.startswith(b"MAINTENIR "):
+                        conn.sendall(b"MAINTIEN ACTIF\n" if ligne.endswith(b"1")
+                                     else b"MAINTIEN INACTIF\n")
+                    elif ligne.startswith(b"LIBERATION "):
+                        conn.sendall(b"LIBERATION " + ligne.split(b" ")[1] + b"S\n")
                     else:
                         conn.sendall(b"ERREUR commande_inconnue\n")
 
@@ -89,6 +103,40 @@ class FakeNoeud:
 
 
 class TestNoeudClient(unittest.TestCase):
+    def test_commandes_v3(self):
+        """LIBERER / CONNECTER / MAINTENIR / LIBERATION : le texte envoye et la reponse lue."""
+        fake = FakeNoeud(0)
+        port = fake.server.getsockname()[1]
+        with NoeudS002('127.0.0.1', port, timeout=2.0) as n:
+            self.assertEqual(n.commande_texte("LIBERER"), "LIBERE")
+            self.assertEqual(fake.derniere_commande, "LIBERER")
+            self.assertEqual(n.commande_texte("MAINTENIR 1"), "MAINTIEN ACTIF")
+            self.assertEqual(fake.derniere_commande, "MAINTENIR 1")
+            self.assertEqual(n.commande_texte("MAINTENIR 0"), "MAINTIEN INACTIF")
+            self.assertEqual(n.commande_texte("LIBERATION 30"), "LIBERATION 30S")
+            self.assertEqual(fake.derniere_commande, "LIBERATION 30")
+            self.assertEqual(n.commande_texte("CONNECTER"), "RECHERCHE")
+        fake.stop()
+
+    def test_statut_expose_batterie_et_mode(self):
+        """La batterie arrive en ENTIER et le mode en TEXTE : les entites en dependent.
+
+        Si `batterie` etait renvoye en texte, le capteur afficherait « inconnu » sur une
+        valeur pourtant lue ; si `maintien` etait converti en entier, l'interrupteur ne
+        saurait pas s'allumer.
+        """
+        fake = FakeNoeud(0)
+        port = fake.server.getsockname()[1]
+        with NoeudS002('127.0.0.1', port, timeout=2.0) as n:
+            res = n.statut()
+        fake.stop()
+        self.assertEqual(res['batterie'], 47)
+        self.assertIsInstance(res['batterie'], int)
+        self.assertEqual(res['etats'], 12)
+        self.assertEqual(res['maintien'], 'oui')
+        self.assertEqual(res['mode'], 'manuel')
+        self.assertEqual(res['liaison'], 'tenue')
+
     def test_ping_statut(self):
         fake = FakeNoeud(0)
         port = fake.server.getsockname()[1]

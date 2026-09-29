@@ -17,6 +17,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    TRANSPORT_NODE,
     CONF_ADDRESS,
     CONF_NODE_HOST,
     CONF_NODE_PORT,
@@ -39,11 +40,18 @@ from .const import (
     MIN_FRAME_BUDGET_MS,
     MAX_LINES_PER_FRAME,
 )
+from .coordinator import S002Coordinator
 from .printer import S002Printer
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[str] = []
+# Entités exposées — uniquement pour le transport « node » (voir async_setup_entry) : c'est le
+# nœud qui voit la trame d'état de l'imprimante (batterie) et qui détient le mode de liaison.
+PLATFORMS: list[str] = ["sensor", "switch", "button"]
+
+# Les entités retrouvent leur coordinateur par `hass.data[DOMAIN + "_coord"][entry_id]`. On ne le
+# range PAS dans hass.data[DOMAIN], qui contient déjà les imprimantes et que _resoudre() parcourt.
+CLE_COORD = DOMAIN + "_coord"
 
 SERVICE_PRINT_TEST = "print_test"
 SERVICE_PRINT_TEXT = "print_text"
@@ -113,6 +121,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = imprimante
     _LOGGER.info("S002 %s configurée (%s)", adresse, donnees.get(CONF_NAME, "S002"))
+
+    # Batterie et mode de liaison : ils n'existent QUE côté nœud réseau. Avec le transport
+    # « proxy », on n'invente pas d'entités vides — elles seraient indisponibles en permanence,
+    # ce qui est pire que leur absence (on ne saurait plus si c'est en panne ou non supporté).
+    if imprimante.transport == TRANSPORT_NODE and imprimante.node_host:
+        coordinator = S002Coordinator(hass, entry, imprimante)
+        # async_refresh et NON async_config_entry_first_refresh : si le nœud est momentanément
+        # injoignable, l'entrée doit quand même se charger (l'imprimante reste utilisable) et les
+        # entités apparaîtront « indisponibles », ce qui est l'information juste.
+        await coordinator.async_refresh()
+        hass.data.setdefault(CLE_COORD, {})[entry.entry_id] = coordinator
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    else:
+        _LOGGER.info(
+            "S002 %s : transport « %s » — pas d'entité batterie/mode (propres au nœud réseau)",
+            adresse, imprimante.transport,
+        )
     # Sans ce rechargement, un changement d'options (taille de tranche, mot de passe…)
     # resterait sans effet jusqu'au prochain redémarrage de HA : les réglages sont lus
     # à la construction de S002Printer.
@@ -128,7 +153,10 @@ async def _async_options_modifiees(hass: HomeAssistant, entry: ConfigEntry) -> N
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Décharge une imprimante."""
+    """Décharge une imprimante et ses entités."""
+    if hass.data.get(CLE_COORD, {}).pop(entry.entry_id, None) is not None:
+        if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+            return False
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     return True
 

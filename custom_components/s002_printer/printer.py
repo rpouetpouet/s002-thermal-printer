@@ -17,6 +17,8 @@ les trames (verrou par adresse, comme dans `ha-escpos-thermal-printer`).
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import asyncio
 import logging
 import time
@@ -318,3 +320,57 @@ class S002Printer:
             return {**transport.stats.as_dict(), **contexte, "ok": True}
         finally:
             await transport.disconnect()
+
+    # ------------------------------------------------------------------------------------
+    # Nœud réseau : niveau de batterie et mode de liaison
+    #
+    # Ces trois fonctions ne parlent PAS à l'imprimante mais au nœud, qui est le seul à voir la
+    # trame d'état de 18 octets (celle qui porte la batterie). Le chemin proxy, lui, la voit
+    # pendant une impression seulement : d'où `battery_pct = None` hors impression.
+    # ------------------------------------------------------------------------------------
+    def noeud_disponible(self) -> str:
+        """Vérifie que cette entrée pilote le nœud réseau, et rend son adresse."""
+        if self.transport != TRANSPORT_NODE:
+            raise S002Error(
+                f"S002 {self.address} : la batterie et le mode de liaison ne sont disponibles "
+                "qu'avec le transport « node » — le nœud est le seul à voir la trame d'état de "
+                f"l'imprimante. Cette entrée est en « {self.transport} »."
+            )
+        if not self.node_host:
+            raise S002Error(f"S002 {self.address} : aucune adresse de nœud renseignée")
+        return self.node_host
+
+    @asynccontextmanager
+    async def _noeud(self):
+        """Ouvre une courte connexion au nœud, sous le verrou de l'imprimante.
+
+        ⚠️ Le verrou est essentiel : le nœud ne sert QU'UN client à la fois. Interroger l'état
+        pendant une impression ne casserait pas l'impression (elle tient déjà la connexion),
+        mais l'interrogation échouerait sans raison apparente. On attend donc la fin de
+        l'impression, et on ne perturbe jamais le papier.
+        """
+        self.noeud_disponible()
+        from .node import S002NodeTransport
+
+        async with _verrou(self.address):
+            transport = S002NodeTransport(self.node_host, self.node_port)
+            await transport.connect()
+            try:
+                yield transport
+            finally:
+                await transport.disconnect()
+
+    async def etat_noeud(self) -> dict[str, object]:
+        """État du nœud : batterie, mode, liaison, compteurs (voir node.S002NodeTransport.statut)."""
+        async with self._noeud() as noeud:
+            return await noeud.statut()
+
+    async def liberer_bluetooth(self) -> str:
+        """Rend l'imprimante tout de suite — c'est ce que fait le bouton « Libérer le Bluetooth »."""
+        async with self._noeud() as noeud:
+            return await noeud.liberer()
+
+    async def maintenir_liaison(self, actif: bool) -> str:
+        """Passe la liaison en mode manuel (actif=True) ou auto (actif=False)."""
+        async with self._noeud() as noeud:
+            return await noeud.maintenir(actif)

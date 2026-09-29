@@ -148,6 +148,33 @@ action:
       message: "Imprimé en {{ cr.duration_s }} s ({{ cr.timings.avg_frame_ms }} ms/trame)"
 ```
 
+## Batterie et mode de liaison (transport « node » uniquement)
+
+L'imprimante n'accepte **qu'un client à la fois**. Le nœud la gardait donc en permanence, et aucun
+téléphone ne pouvait s'y connecter. Depuis le firmware v2, le nœud **la rend après un délai
+d'inactivité** (120 s par défaut) et **la reprend tout seul** à la prochaine impression (1 à 3 s,
+invisible côté Home Assistant).
+
+Avec le transport « node », l'entrée expose trois entités :
+
+- **`sensor.*_batterie`** — le pourcentage annoncé par l'imprimante dans sa trame d'état
+  (18 octets, poussée toutes les 5 s). Le nœud la **rejetait** auparavant : c'est pour cela que la
+  batterie restait inconnue en mode nœud alors que le chemin proxy la lisait très bien. Le capteur
+  affiche « inconnu » tant qu'aucune trame n'est arrivée (le nœud renvoie `batterie=-1`) — jamais
+  « 0 % », qui ferait croire à une batterie vide ;
+- **`switch.*_maintenir_la_liaison`** — **allumé = mode manuel** : le nœud garde la liaison et
+  ignore le délai (utile avant une série d'impressions, ou pour empêcher l'app du téléphone de
+  prendre la main) ; **éteint = mode auto** : il la rend après le délai, ce qui laisse un téléphone
+  se connecter ;
+- **`button.*_liberer_le_bluetooth`** — rend l'imprimante **tout de suite**, sans attendre le délai.
+  Le nœud repasse alors en mode auto, et l'interrupteur ci-dessus se remet sur « éteint » de
+  lui-même : son état est **relu sur le nœud**, jamais mémorisé côté Home Assistant.
+
+Avec le transport « proxy », ces entités **n'existent pas**, volontairement : le chemin BLE de Home
+Assistant ne voit la trame d'état que pendant une impression, et il n'y a aucune liaison à libérer
+(il ferme déjà la connexion après chaque impression). Des entités vides en permanence auraient été
+plus trompeuses que leur absence.
+
 ## Réglages de transport (Options)
 
 | Option | Défaut | Rôle |
@@ -231,6 +258,10 @@ depuis Home Assistant, alors que la VM HA n'a **aucun adaptateur Bluetooth**.
   intégration est prévue pour l'accueillir.
 - **Une impression à la fois** par imprimante (verrou interne).
 - **Pas de compression** : une image de 200 lignes envoie 14,4 Ko utiles.
+- **L'imprimante peut s'endormir** quand le nœud rend la liaison (il la tenait éveillée en
+  permanence avant la v2). Une impression lancée après un long repos peut alors échouer avec
+  « imprimante injoignable » jusqu'à ce qu'on appuie sur son bouton. Si cela se produit :
+  allumer l'imprimante, ou allumer `switch.*_maintenir_la_liaison` pour qu'elle reste éveillée.
 - **Texte** : une seule fonte, grasse et embarquée dans l'intégration (`DejaVu Sans Condensed
   Bold`, licence Bitstream Vera — voir `fonts/LICENSE-DejaVu.txt`). Le choix d'une police par
   l'utilisateur n'est pas exposé.

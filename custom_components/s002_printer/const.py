@@ -8,7 +8,7 @@ import re
 
 DOMAIN = "s002_printer"
 NAME = "ORGSTA S002 Thermal Printer"
-VERSION = "0.2.5"
+VERSION = "0.3.0"
 
 # --- Transport BLE -------------------------------------------------------------------
 # L'imprimante expose le service ff00 en DEUX exemplaires (appareil multi-link) ;
@@ -90,6 +90,26 @@ CONF_WRITE_RESPONSE = "write_response"
 CONF_TRANSPORT = "transport"
 TRANSPORT_PROXY = "proxy"
 TRANSPORT_NODE = "node"
+
+# ----------------------------------------------------------------------------------------------
+# Commandes texte du nœud (firmware v2/v3) — voir firmware/s002-bridge/README.md
+# ----------------------------------------------------------------------------------------------
+CMD_LIBERER = "LIBERER"          # rend l'imprimante tout de suite (et repasse en mode auto)
+CMD_CONNECTER = "CONNECTER"      # reprend la liaison
+CMD_MAINTENIR = "MAINTENIR"      # MAINTENIR 1 = mode manuel, 0 = mode auto
+
+# Période d'interrogation du nœud par le coordinateur. La batterie est poussée par l'imprimante
+# toutes les 5 s, mais un relevé toutes les 30 s suffit : c'est un niveau qui bouge lentement, et
+# chaque interrogation occupe la seule connexion du nœud (donc jamais pendant une impression).
+NODE_STATUT_INTERVALLE_S = 30
+NODE_STATUT_TIMEOUT_S = 8.0
+
+# Champs de la réponse STATUS du nœud
+CHAMP_BATTERIE = "batterie"      # -1 = aucune trame d'état reçue depuis le démarrage
+CHAMP_ETATS = "etats"            # nombre de trames d'état reçues (diagnostic)
+CHAMP_MAINTIEN = "maintien"      # "oui" = mode manuel / "non" = mode auto
+CHAMP_MODE = "mode"              # "manuel" / "auto"
+CHAMP_LIAISON = "liaison"        # "tenue" / "libre"
 DEFAULT_TRANSPORT = TRANSPORT_PROXY
 TRANSPORTS = (TRANSPORT_PROXY, TRANSPORT_NODE)
 CONF_NODE_HOST = "node_host"

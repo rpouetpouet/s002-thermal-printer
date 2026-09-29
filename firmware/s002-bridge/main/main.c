@@ -133,6 +133,21 @@ static int64_t s_dernier_echange_us;         /* horodatage de la derniere impres
 static volatile bool s_liberation_voulue;    /* vrai = liaison rendue, on ne rescanne pas */
 static volatile int s_liberation_auto_s = CONFIG_S002_LIBERATION_INACTIF_S;
 
+/* ------------------------------------------------------------------------------------------
+ * Mode MANUEL / AUTO, et niveau de batterie (v3, 29/09/2026)
+ *
+ * - `s_maintien` : vrai = mode MANUEL, le noeud garde la liaison et le delai d'inactivite est
+ *   ignore (c'est ce que demande le bouton cote Home Assistant). Faux = mode AUTO, le delai
+ *   decide. En RAM volontairement : le client repose l'etat, un redemarrage revient a l'auto.
+ * - `s_batterie_pct` : l'imprimante pousse sa trame d'etat (18 octets, toutes les 5 s) et le
+ *   noeud la JETAIT — c'est pour ca que la batterie restait inconnue en mode noeud. Format
+ *   identique a celui du chemin proxy (custom_components/s002_printer/ble.py) : en-tete de
+ *   5 octets, controle de 5 octets en queue, charge a l'index 7 du corps, soit l'octet 12.
+ * --------------------------------------------------------------------------------------- */
+static volatile int s_batterie_pct = -1;     /* -1 = jamais recue */
+static volatile unsigned s_etats_vus;
+static volatile bool s_maintien;
+
 /* Diagnostic : sans ces compteurs, un firmware qui attend son peripherique est TOTALEMENT
  * muet, ce qui est indiagnostiquable a distance (vecu le 29/09/2026 : flash verifie bon,
  * zero octet a la console, cause reelle = rien a journaliser). */
@@ -833,10 +848,26 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
              * d'écriture ici (cela désynchroniserait la sérialisation des écritures). */
             if (n >= 2 && buf[0] == 0x01 && buf[1] > 0) {
                 /* Le second octet est le NOMBRE DE PAQUETS autorises : `01 05` = 5,
-                 * `01 07` = 7 (crédit initial). On cumule. */
+                 * `01 07` = 7 (credit initial). On cumule. */
                 s_credits++;
                 s_paquets_autorises += buf[1];
                 xSemaphoreGive(s_credit_event);
+            }
+            /* Trame d'ETAT (18 octets) : elle porte le niveau de batterie. Le noeud la jetait,
+             * d'ou une batterie toujours inconnue en mode noeud alors que le chemin proxy la
+             * lisait tres bien. On applique la MEME regle que ble.py : l'octet 12 est la
+             * charge en pourcent, encadre d'un en-tete et d'un controle de 5 octets chacun.
+             * Le garde `n >= 13` est celui de ble.py ; et on ne retient que 1..100, sinon une
+             * trame d'un autre type ecraserait une valeur valide. */
+            if (n >= 13) {
+                uint8_t charge = buf[12];
+                s_etats_vus++;
+                if (charge > 0 && charge <= 100) {
+                    if (s_batterie_pct != (int)charge) {
+                        ESP_LOGI(TAG, "  batterie : %u %%", (unsigned)charge);
+                    }
+                    s_batterie_pct = (int)charge;
+                }
             }
         }
         return 0;
@@ -1268,10 +1299,29 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
     if (strcasecmp(commande, "PING") == 0) {
         snprintf(reponse, taille, "PONG");
     } else if (strcasecmp(commande, "LIBERER") == 0) {
-        /* Rendre l'imprimante a l'instant : c'est ce que Home Assistant expose par un bouton. */
+        /* Rendre l'imprimante a l'instant : c'est ce que Home Assistant expose par un bouton.
+         * On repasse AUSSI en mode auto : rendre la liaison en mode manuel serait contradictoire
+         * (le mode manuel dit « garde-la »), et le bouton « liberer » veut dire « laisse-la
+         * partir ». L'entite cote Home Assistant relit `maintien=` sur ce meme STATUS, donc son
+         * interrupteur se remet tout seul sur auto. */
         bool tenue = (s_conn_handle != BLE_HS_CONN_HANDLE_NONE);
+        s_maintien = false;
         liberer_liaison("demande du client");
         snprintf(reponse, taille, tenue ? "LIBERE" : "DEJA_LIBRE");
+    } else if (strncasecmp(commande, "MAINTENIR ", 10) == 0) {
+        /* Mode MANUEL (1) : le noeud garde la liaison, le delai d'inactivite est ignore.
+         * Mode AUTO (0) : le delai decide. Passer en manuel alors que la liaison est rendue la
+         * reprend tout de suite — sinon l'interrupteur afficherait « maintenu » sans effet. */
+        s_maintien = (atoi(commande + 10) != 0);
+        ESP_LOGW(TAG, "mode %s (delai d'inactivite %s)", s_maintien ? "MANUEL" : "auto",
+                 s_maintien ? "ignore" : "actif");
+        if (s_maintien && s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+            s_liberation_voulue = false;
+            start_scan();
+            snprintf(reponse, taille, "MAINTIEN ACTIF RECHERCHE");
+        } else {
+            snprintf(reponse, taille, s_maintien ? "MAINTIEN ACTIF" : "MAINTIEN INACTIF");
+        }
     } else if (strcasecmp(commande, "CONNECTER") == 0) {
         s_liberation_voulue = false;
         if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
@@ -1296,12 +1346,17 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
         /* La partition qui tourne est exposee volontairement : c'est la PREUVE qu'une mise a
          * jour par le reseau a bien ete prise en compte (ota_0 -> ota_1), sans avoir a ouvrir
          * l'imprimante ni a brancher un cable. */
+        /* `batterie=-1` = aucune trame d'etat recue depuis le demarrage (l'imprimante les
+         * pousse toutes les 5 s quand la liaison est tenue). `etats=` permet de distinguer
+         * « aucune trame » de « trames recues mais charge illisible ». */
         snprintf(reponse, taille,
-                 "etat=%s liaison=%s partition=%s inactif=%llds liberation=%ds paquets=%d "
-                 "autorises=%d credits=%d attentes=%d timeouts=%d ecritures=%u annonces=%u "
-                 "rssi=%d memoire=%u",
+                 "etat=%s liaison=%s mode=%s maintien=%s batterie=%d etats=%u partition=%s "
+                 "inactif=%llds liberation=%ds paquets=%d autorises=%d credits=%d attentes=%d "
+                 "timeouts=%d ecritures=%u annonces=%u rssi=%d memoire=%u",
                  s_pret_a_imprimer ? "pret" : "attente",
                  s_conn_handle != BLE_HS_CONN_HANDLE_NONE ? "tenue" : "libre",
+                 s_maintien ? "manuel" : "auto", s_maintien ? "oui" : "non",
+                 s_batterie_pct, (unsigned)s_etats_vus,
                  esp_ota_get_running_partition()->label,
                  (long long)(inactif_us / 1000000), s_liberation_auto_s, s_paquets,
                  s_paquets_autorises, s_credits, s_flux_attentes, s_flux_timeouts,
@@ -1430,7 +1485,7 @@ void app_main(void)
     int battements_veille = 0;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(5000));
-        if (s_liberation_auto_s > 0 && !s_liberation_voulue && s_pret_a_imprimer &&
+        if (!s_maintien && s_liberation_auto_s > 0 && !s_liberation_voulue && s_pret_a_imprimer &&
             s_conn_handle != BLE_HS_CONN_HANDLE_NONE && s_dernier_echange_us > 0 &&
             (esp_timer_get_time() - s_dernier_echange_us) >
                 (int64_t)s_liberation_auto_s * 1000000) {
