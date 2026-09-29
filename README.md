@@ -208,6 +208,12 @@ plus trompeuses que leur absence.
 | `frame_pause_ms` | 0 | Pause entre trames (≤ 400 ms, sinon blanc garanti) |
 | `feed_before_mm` / `feed_after_mm` | 0 / **15** | Marges d'avance autour de l'image. Les 15 mm après impression laissent de quoi couper ou déchirer la bande sans entamer le contenu ; mettre 0 pour désactiver. |
 
+> ⚠️ **Le défaut ne vaut que pour les entrées neuves.** Une entrée créée avant la v0.3.4 a
+> `feed_after_mm` **enregistré à `0`** dans ses options, et la valeur stockée prime toujours sur le
+> défaut du code : `0` gagne, rien n'avance. Il faut régler le champ à `15` dans
+> *Paramètres → Appareils et services → S002 → Configurer*. Ne jamais conclure depuis le défaut du
+> code : lire la valeur réellement stockée (voir `references/transport-reseau-tcp.md`).
+
 ### Choisir le transport : `proxy` (BLE) ou `node` (réseau)
 
 Deux transports interchangeables, réglés par les **options** de l'intégration (bouton
