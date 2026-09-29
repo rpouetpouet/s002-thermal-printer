@@ -1,0 +1,33 @@
+# Cible : ESP32-C3 (un seul coeur, radio 2,4 GHz partagée Wi-Fi/BLE).
+CONFIG_IDF_TARGET="esp32c3"
+
+# --- Pile Bluetooth : NimBLE, central + observateur uniquement ---------------------
+# Le S002 est un périphérique : nous sommes le CENTRAL. On désactive les rôles inutiles
+# (peripheral/broadcaster) pour rendre de la RAM et du temps radio au Wi-Fi.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+
+# MTU : l'imprimante annonce 240 ; on demande le maximum pour éviter tout découpage
+# supplémentaire côté pile (nos paquets d'écriture font 200 o, déjà validés).
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
+
+# Tampons NimBLE : plus généreux que le défaut pour ne pas étrangler une rafale
+# d'écritures dos à dos (c'est précisément ce qui provoquait les blancs par proxy).
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_SIZE=255
+
+# --- Coexistence radio -------------------------------------------------------------
+# Valeur par défaut dès que Wi-Fi et BT sont activés, déclarée ici pour rester explicite :
+# l'arbitrage Wi-Fi/BLE est piloté par logiciel (multiplexage temporel).
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+
+# --- Wi-Fi -------------------------------------------------------------------------
+CONFIG_ESP_WIFI_ENABLED=y
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32

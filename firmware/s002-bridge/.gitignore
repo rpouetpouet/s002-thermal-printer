@@ -1,0 +1,15 @@
+# Sorties de build ESP-IDF
+build/
+managed_components/
+
+# ⚠️ `sdkconfig` est GENERE par menuconfig et contient le SSID + le MOT DE PASSE Wi-Fi
+# (CONFIG_S002_WIFI_PASSWORD) : ne jamais le versionner. Le socle versionné est
+# `sdkconfig.defaults`, qui ne contient aucun secret.
+sdkconfig
+sdkconfig.old
+
+# Divers
+*.bin
+*.elf
+*.map
+.dist/

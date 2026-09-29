@@ -1,0 +1,45 @@
+menu "S002 bridge (v0)"
+
+    config S002_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+        help
+            Réseau auquel le pont se rattache. Laisser vide = pas de Wi-Fi (mesure BLE seule).
+
+    config S002_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+
+    config S002_PRINTER_MAC
+        string "Adresse MAC de l'imprimante"
+        default "06:03:DD:EC:16:4D"
+
+    config S002_WRITE_HANDLE
+        hex "Handle d'écriture (ff02, instance service000c)"
+        default 0x11
+        help
+            Mesuré le 28/09 : l'imprimante expose ff02 DEUX fois ; seul le handle le plus
+            haut écrit réellement. La découverte des services affiche le plan réel : le
+            confronter à cette valeur avant d'imprimer.
+
+    config S002_NOTIFY_STATE_HANDLE
+        hex "Handle de notification d'état (ff01)"
+        default 0xe
+
+    config S002_NOTIFY_FLOW_HANDLE
+        hex "Handle de notification de flux (ff03)"
+        default 0x13
+
+    config S002_LINES_PER_FRAME
+        int "Lignes par trame d'image"
+        range 1 40
+        default 8
+        help
+            Mesuré : 40 lignes (2880 o) sont acceptées, 42 refusées. 8 lignes = 576 o.
+
+    config S002_TEST_PATTERN_LINES
+        int "Hauteur du motif de test, en lignes"
+        range 8 200
+        default 24
+
+endmenu
