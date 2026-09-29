@@ -1,23 +1,58 @@
 # `s002-bridge` — nœud-pont BLE dédié (ESP32-C3)
 
-Remplace le chemin « proxy ESPHome » par un pont **dédié**, placé près de l'imprimante : plus
-d'aller-retour Home Assistant → Wi-Fi → proxy → BLE **par paquet**, qui coûtait 116 ms par écriture
+Pont **dédié**, placé près de l'imprimante ORGSTA S002 : il remplace le chemin « proxy ESPHome »,
+dont l'aller-retour Home Assistant → Wi-Fi → proxy → BLE **par paquet** coûtait 116 ms par écriture
 de 200 octets et provoquait des blancs de 4 mm sur les impressions longues.
 
-> **v0 = banc de mesure**, pas encore le pont final. Elle se connecte, découvre, imprime un motif
-> de test et chronomètre chaque écriture. Le TCP viendra en v1 (voir
-> `references/transport-esp32-node.md` dans le skill `orgsta-s002-printer`).
+| chemin | coût par paquet de 200 o | une page de 93 mm |
+| --- | --- | --- |
+| proxy ESPHome (HA) | 116 ms moy. (614 max) | ~45 s (blancs) |
+| **ce nœud (C3, Wi-Fi)** | **13,2 ms moy.** | **~2 s, propre** |
+| Raspberry Pi en direct | ~4 ms | — |
 
-## Ce que la v0 mesure (et pourquoi ces quatre choses)
+Le nœud **reste bête** : il ne connaît ni le protocole YK ni les types de message. Home Assistant
+construit les trames (`custom_components/s002_printer/yk.py`) et le nœud écrit des octets BLE avec
+réponse en comptant les crédits de flux. Une seule source de vérité, moins de code embarqué.
 
-| mesure | pourquoi c'est elle qui compte |
-| --- | --- |
-| connexion réussie avec le **type d'adresse annoncé** | l'adresse de l'imprimante est localement administrée (`random`) ; un central qui se connecte en `public` échoue sans message clair |
-| **intervalle de connexion négocié** | c'est le levier principal : intervalle court = ~4 ms/paquet, intervalle long = blancs |
-| **durée d'une écriture avec réponse** | le chiffre à comparer aux 116 ms/paquet du proxy et aux ~4 ms mesurés en direct depuis la Pi |
-| **MTU et DLE négociées** | inconnues à ce jour : à mesurer, pas à supposer |
+## Ce que fait la v2 (29/09/2026)
 
-Le juge final reste le papier : le motif doit sortir **continu**, sans blanc.
+1. **Rend la liaison BLE quand il ne s'en sert pas.** L'imprimante n'accepte qu'**un client à la
+   fois** : en v1 le nœud appelait `ble_gap_connect()` une fois au démarrage et **n'appelait
+   `ble_gap_terminate()` nulle part**, donc il gardait l'imprimante en permanence et aucun
+   téléphone ne pouvait s'y connecter. Désormais la liaison est rendue après *N* secondes sans
+   impression (`0` = jamais, comme en v1) et **reprise toute seule** à la prochaine impression
+   (~1 à 3 s, invisible pour Home Assistant).
+2. **Se met à jour par le réseau (OTA).** Atteindre le port USB du C3 demande d'ouvrir le boîtier
+   de l'imprimante : le premier flash « compatible OTA » se fait par USB, **tous les suivants
+   passent par le Wi-Fi** (`tools/ota_pousser.py`). L'image va dans la partition **inactive** :
+   une coupure en cours de transfert ne casse pas le firmware qui tourne.
+
+## L'interface réseau (port 3333, un client à la fois)
+
+Le **premier octet** décide du mode :
+
+- `0x64` → **flux binaire** : des trames YK telles quelles, écrites en BLE (c'est ce que le
+  transport `node` de l'intégration Home Assistant utilise) ;
+- **tout autre octet** → **commande texte**, terminée par `\n`, réponse sur la même connexion.
+
+| commande | effet | réponse |
+| --- | --- | --- |
+| `PING` | — | `PONG` |
+| `STATUS` | état complet | `etat=… liaison=tenue\|libre partition=ota_0\|ota_1 inactif=…s liberation=…s paquets=… credits=… ecritures=… annonces=… rssi=… memoire=…` |
+| `LIBERER` | rend l'imprimante **tout de suite** | `LIBERE` / `DEJA_LIBRE` |
+| `CONNECTER` | reprend la liaison | `RECHERCHE` / `DEJA_CONNECTE` |
+| `LIBERATION <s>` | règle le délai d'inactivité (0 = jamais) | `LIBERATION <s>S` |
+| `OTA <octets>` | reçoit `octets` octets bruts = une image d'application | `OTA PRET`, puis `OTA OK REDEMARRAGE` |
+
+### Prouver ce qui se passe, sans papier
+
+Deux compteurs suffisent, et ils ne mentent pas :
+
+- **`annonces` gelé** entre deux relevés = le nœud tient la liaison (il ne scanne plus) ;
+- **`ecritures`** : relever **juste avant** la commande d'impression, puis après. L'écart doit égaler
+  le nombre de morceaux envoyés par Home Assistant. C'est la seule preuve que le papier est passé
+  par le nœud ;
+- **`partition`** : passer de `ota_0` à `ota_1` est la preuve qu'une mise à jour OTA a été prise.
 
 ## Compiler
 
@@ -25,49 +60,68 @@ Le juge final reste le papier : le motif doit sortir **continu**, sans blanc.
 . ~/esp/esp-idf/export.sh
 cd firmware/s002-bridge
 idf.py set-target esp32c3
-idf.py menuconfig      # « S002 bridge (v0) » : SSID / mot de passe Wi-Fi
-idf.py -j2 build
+idf.py build
 ```
 
-## Flasher et lire le résultat
+ESP-IDF **v6.0.3** (la branche v5.4 est incompatible avec CMake 4.2 d'Ubuntu 26.04).
+⚠️ `sdkconfig` (généré) **contient le mot de passe Wi-Fi** : non versionné (`.gitignore`),
+seul `sdkconfig.defaults` l'est.
+
+## Flasher par USB (une fois, ou en secours)
+
+⚠️ **Ne jamais écrire la région `0x9000` (NVS) : c'est là que vivent les identifiants Wi-Fi.**
+`idf.py flash` écrit toute la table depuis 0x0 et **efface le Wi-Fi** — flasher région par région.
 
 ```bash
-idf.py -p /dev/ttyUSB0 flash monitor     # ou /dev/ttyACM0 (USB-Serial-JTAG du C3)
+~/esptool-venv/bin/python -m esptool --chip esp32c3 -p /dev/serial/by-id/usb-Espressif_* \
+  --before default_reset --after watchdog_reset write_flash \
+  --flash_mode dio --flash_freq 80m --flash_size 4MB \
+  0x0 build/bootloader/bootloader.bin \
+  0x8000 build/partition_table/partition-table.bin \
+  0xf000 build/ota_data_initial.bin \
+  0x20000 build/s002-bridge.bin
 ```
 
-`menuconfig` → *S002 bridge (v0)* :
+- `--after watchdog_reset` : les Super Mini ne câblent pas RTS à EN, donc `hard_reset` ne fait
+  rien et la puce **reste en mode téléchargement** ;
+- le port change de nom après un reset : toujours passer par `/dev/serial/by-id/usb-Espressif_*` ;
+- esptool **v4 (pip)** utilise `write_flash` et des tirets bas (`--flash_mode`) ; **v5 (ESP-IDF)**
+  utilise des tirets. Les deux commandes ci-dessus sont celles de la v4.
 
-- **Wi-Fi SSID / password** — vide = mesure BLE seule (sans coexistence radio, à faire en premier
-  pour établir la référence) ;
-- **Adresse MAC** — `06:03:DD:EC:16:4D` par défaut ;
-- **Handles** — écriture `0x0011`, notify état `0x000e`, flux `0x0013` (mesurés le 28/09). La v0
-  **affiche le plan réel** des services/caractéristiques : si le handle d'écriture configuré
-  n'apparaît pas dans la découverte, elle le dit explicitement au lieu d'écrire dans le vide.
+## Mettre à jour par le réseau (OTA)
 
-À lire dans le moniteur :
-
-```
-CONNECTE : intervalle reel X ms          <- doit etre proche de 7,5-15 ms
-MTU negociee : N                          <- 240 attendu
-ecriture  1 :   X ms                      <- doit tourner autour de 4 ms, pas 116
-=== BILAN : N ecritures | moy X ms | max Y ms ===
+```bash
+python tools/ota_pousser.py build/s002-bridge.bin            # --hote 192.168.42.62 --port 3333
 ```
 
-## Une contrainte NimBLE qui dicte l'architecture du code
+Le script annonce la taille, attend `OTA PRET`, envoie l'image (~13 s pour 1,05 Mo, ~85 Ko/s),
+puis **relit la partition** : `ota_0` → `ota_1` = mise à jour confirmée.
 
-Une seule opération GATT peut être en vol à la fois : lancer une découverte de caractéristiques
-**depuis** le callback de découverte de services renvoie `EBUSY` — et l'erreur passe facilement
-inaperçue. Le code enchaîne donc les étapes via une machine à états qui n'avance qu'à la réception
-de `BLE_HS_EDONE`.
+## Table de partitions (`partitions.csv`)
 
-Deux autres pièges traités dans le code :
+```
+nvs      0x9000   24 Ko     <- identifiants Wi-Fi : NE JAMAIS TRONQUER NI EFFACER
+otadata  0xf000    8 Ko
+phy_init 0x11000   4 Ko
+ota_0    0x20000  1856 Ko
+ota_1    0x1f0000 1856 Ko
+```
 
-- **l'abonnement aux notifications se fait en écrivant sur le descripteur CCCD** (`0x2902`) : il
-  n'existe pas de fonction `ble_gattc_subscribe` dans NimBLE ;
-- **un crédit de flux (`01 05`) n'est pas une fin d'écriture** : le libérer sur le sémaphore
-  d'écriture désynchroniserait la sérialisation des écritures.
+L'application démarre à `0x20000` (et non `0x10000`) parce qu'`otadata` a besoin de 8 Ko après la
+NVS. Les 60 Ko libres entre `0x11000` et `0x20000` ne servent à rien : gratter dedans voudrait dire
+toucher à la NVS ou à `otadata`.
 
-## Écriture AVEC réponse, obligatoire
+## Contraintes matérielles et pièges (tous vécus)
 
-Sans réponse, l'imprimante reçoit les octets et **n'imprime rien**, en silence (constaté le 28/09
-via proxy). Le code utilise `ble_gattc_write_flat`, qui attend l'acquittement.
+- **Écriture BLE AVEC réponse obligatoire** : sans acquittement l'imprimante reçoit les octets et
+  **n'imprime rien**, en silence.
+- **Une seule opération GATT en vol** (NimBLE) : lancer une découverte depuis le callback d'une
+  autre renvoie `EBUSY` silencieusement → machine à états qui n'avance que sur `BLE_HS_EDONE`.
+- **Pas de `ble_gattc_subscribe`** : l'abonnement s'écrit sur le descripteur CCCD (`0x2902`).
+- **Un crédit de flux (`01 05`) n'est pas une fin d'écriture** : ne pas libérer le sémaphore
+  d'écriture dessus, ça désynchronise la sérialisation.
+- **Tampon de réception TCP en `static`** : 5 Ko sur la pile d'une tâche la fait déborder (vécu).
+- **Console sur USB-Serial-JTAG** (`CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`) : sinon, sur une carte
+  dont seule la prise USB est branchée, la ROM répond mais **aucun log applicatif** n'apparaît.
+- La liste des services/caractéristiques est **affichée au démarrage** : si le handle d'écriture
+  configuré n'y apparaît pas, le firmware le dit au lieu d'écrire dans le vide.

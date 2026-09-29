@@ -31,6 +31,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -49,6 +50,7 @@
 #include "esp_netif.h"
 #include "nvs.h"
 
+#include "lwip/sockets.h"
 #include "serveur_tcp.h"
 #include "os/os_mbuf.h"
 
@@ -113,6 +115,23 @@ static int s_svc_nb, s_svc_i;
 static uint16_t s_notify_h[MAX_NOTIFY], s_notify_svc_end[MAX_NOTIFY], s_cccd_h[MAX_NOTIFY];
 static int s_notify_trouves, s_notify_i;
 static bool s_write_handle_confirmee, s_pret_a_imprimer;
+
+/* ------------------------------------------------------------------------------------------
+ * Rendre la liaison a qui la demande (v2, 29/09/2026)
+ *
+ * L'imprimante n'accepte qu'UN client a la fois. En v1 le noeud appelait ble_gap_connect() une
+ * fois au demarrage et `ble_gap_terminate` NULLE PART : il tenait donc l'imprimante en
+ * permanence, et un telephone ne pouvait jamais s'y connecter. Prouve par mesure : le compteur
+ * d'annonces BLE du noeud restait GELE (3693 -> 3693 sur 40 s) — un noeud qui tient la liaison
+ * ne scanne plus.
+ *
+ * Deux facons de rendre la liaison : apres N secondes sans impression (reglable, 0 = jamais),
+ * ou sur ordre explicite du client (`LIBERER`). Dans les deux cas on ne rescanne PAS : sinon le
+ * noeud reprendrait la liaison aussitot et le telephone n'aurait toujours rien.
+ * --------------------------------------------------------------------------------------- */
+static int64_t s_dernier_echange_us;         /* horodatage de la derniere impression */
+static volatile bool s_liberation_voulue;    /* vrai = liaison rendue, on ne rescanne pas */
+static volatile int s_liberation_auto_s = CONFIG_S002_LIBERATION_INACTIF_S;
 
 /* Diagnostic : sans ces compteurs, un firmware qui attend son peripherique est TOTALEMENT
  * muet, ce qui est indiagnostiquable a distance (vecu le 29/09/2026 : flash verifie bon,
@@ -629,6 +648,10 @@ static void etape_suivante(void)
         }
         ESP_LOGI(TAG, "  abonnements termines — pret a imprimer");
         s_pret_a_imprimer = true;
+        /* L'horloge d'inactivite part de la CONNEXION et non de 0 : sans ca, le premier passage
+         * du chien de garde croirait l'imprimante inactive depuis toujours et la libererait
+         * aussitot apres l'avoir prise. */
+        s_dernier_echange_us = esp_timer_get_time();
         s_state = ST_PRINT;
         break;
     }
@@ -641,6 +664,20 @@ static void etape_suivante(void)
  * Événements GAP
  * -------------------------------------------------------------------------------------- */
 static void start_scan(void);
+
+static void liberer_liaison(const char *raison)
+{
+    if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        ESP_LOGI(TAG, "liberation demandee (%s) : la liaison est deja rendue", raison);
+        return;
+    }
+    /* On note l'intention AVANT de couper : le gestionnaire de deconnexion la relit pour ne
+     * PAS relancer la recherche (sinon on reprendrait l'imprimante immediatement). */
+    s_liberation_voulue = true;
+    ESP_LOGW(TAG, "LIBERATION de l'imprimante (%s) : elle redevient visible pour un telephone",
+             raison);
+    ble_gap_terminate(s_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+}
 
 static int gap_event_cb(struct ble_gap_event *event, void *arg)
 {
@@ -749,6 +786,16 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         stats_report();
         s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         s_state = ST_IDLE;
+        if (s_liberation_voulue) {
+            /* Liberation VOLONTAIRE : surtout ne pas relancer la recherche, sinon le noeud
+             * reprendrait l'imprimante dans la seconde et elle resterait inaccessible au
+             * telephone. C'est la prochaine impression qui declenchera la reprise. */
+            s_pret_a_imprimer = false;
+            ESP_LOGW(TAG, "imprimante RENDUE — elle est de nouveau annoncee et connectable par un "
+                          "autre appareil (telephone) ; le noeud la reprendra a la prochaine "
+                          "impression");
+            return 0;
+        }
         vTaskDelay(pdMS_TO_TICKS(1500));
         start_scan();
         return 0;
@@ -896,6 +943,69 @@ static bool tcp_reception(const uint8_t *donnees, size_t longueur);
 static void tcp_commande(const char *commande, char *reponse, size_t taille);
 static bool s_serveur_demarre;
 
+/* ------------------------------------------------------------------------------------------
+ * Mise a jour du firmware par le RESEAU (v2, 29/09/2026)
+ *
+ * Pourquoi : atteindre le port USB du C3 demande de demonter l'imprimante. Le premier flash
+ * « compatible OTA » se fait donc par USB, et tous les suivants passent par le reseau.
+ *
+ * Protocole : le client envoie « OTA <octets> » en mode texte, attend « OTA PRET », puis envoie
+ * le binaire brut. L'ecriture va dans la partition INACTIVE : une coupure au milieu ne peut pas
+ * casser le firmware qui tourne (le redemarrage n'a lieu qu'apres une image validee).
+ * --------------------------------------------------------------------------------------- */
+static int ota_recevoir(int fd, size_t octets)
+{
+    const esp_partition_t *cible = esp_ota_get_next_update_partition(NULL);
+    if (cible == NULL) {
+        ESP_LOGE(TAG, "OTA : aucune partition inactive — la table de partitions n'a pas d'ota_1 ?");
+        return -1;
+    }
+    ESP_LOGW(TAG, "OTA : %u octets a ecrire dans '%s' (0x%lx), version qui tourne = '%s'",
+             (unsigned)octets, cible->label, (unsigned long)cible->address,
+             esp_ota_get_running_partition()->label);
+
+    esp_ota_handle_t ota = 0;
+    esp_err_t err = esp_ota_begin(cible, octets, &ota);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA : esp_ota_begin -> %s", esp_err_to_name(err));
+        return -1;
+    }
+    /* Tampon STATIQUE : 4 Ko sur la pile d'une tache de 5 Ko la fait deborder (deja vecu sur ce
+     * meme serveur TCP le 29/09/2026). */
+    static uint8_t bloc[4096];
+    size_t reste = octets;
+    while (reste > 0) {
+        size_t demande = reste < sizeof bloc ? reste : sizeof bloc;
+        int n = recv(fd, bloc, demande, 0);
+        if (n <= 0) {
+            ESP_LOGE(TAG, "OTA : flux interrompu, %u octets manquants", (unsigned)reste);
+            esp_ota_abort(ota);
+            return -1;
+        }
+        err = esp_ota_write(ota, bloc, (size_t)n);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "OTA : esp_ota_write -> %s", esp_err_to_name(err));
+            esp_ota_abort(ota);
+            return -1;
+        }
+        reste -= (size_t)n;
+    }
+    err = esp_ota_end(ota);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA : image refusee -> %s", esp_err_to_name(err));
+        return -1;
+    }
+    err = esp_ota_set_boot_partition(cible);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA : partition de demarrage -> %s", esp_err_to_name(err));
+        return -1;
+    }
+    ESP_LOGW(TAG, "OTA : image acceptee — redemarrage dans 1 s");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+    return 0;   /* jamais atteint */
+}
+
 static void sur_ip_obtenue(void *arg, esp_event_base_t base, int32_t id, void *donnees)
 {
     (void)arg; (void)base; (void)id;
@@ -907,7 +1017,7 @@ static void sur_ip_obtenue(void *arg, esp_event_base_t base, int32_t id, void *d
     if (s_serveur_demarre) {
         return;
     }
-    if (serveur_tcp_demarrer(CONFIG_S002_PORT_TCP, tcp_reception, tcp_commande) == ESP_OK) {
+    if (serveur_tcp_demarrer(CONFIG_S002_PORT_TCP, tcp_reception, tcp_commande, ota_recevoir) == ESP_OK) {
         s_serveur_demarre = true;
         ESP_LOGI(TAG, "serveur TCP en ecoute sur le port %d", CONFIG_S002_PORT_TCP);
     } else {
@@ -1121,10 +1231,30 @@ static bool parse_mac(const char *s, uint8_t out[6])
  * ------------------------------------------------------------------------------------ */
 static bool tcp_reception(const uint8_t *donnees, size_t longueur)
 {
+    s_dernier_echange_us = esp_timer_get_time();
+
     if (!s_pret_a_imprimer) {
-        ESP_LOGW(TAG, "TCP : %u octets recus mais imprimante pas encore prete — bloc ignore",
-                 (unsigned)longueur);
-        return false;
+        if (s_liberation_voulue) {
+            ESP_LOGI(TAG, "impression demandee : reprise de l'imprimante (elle avait ete rendue)");
+            s_liberation_voulue = false;
+            start_scan();
+        }
+        /* On ATTEND la liaison au lieu de jeter le bloc : un bloc jete trouerait le raster envoye
+         * par le client (l'image sortirait avec une bande manquante, en silence). Le client, lui,
+         * patiente sur son socket — c'est prevu, il n'envoie sa suite qu'apres avoir recu ses
+         * credits. 10 s de garde : au-dela, c'est presque toujours une imprimante eteinte. */
+        int attente_ms = 0;
+        while (!s_pret_a_imprimer && attente_ms < 10000) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            attente_ms += 100;
+        }
+        if (!s_pret_a_imprimer) {
+            ESP_LOGE(TAG, "imprimante injoignable apres %d s : bloc de %u octets refuse "
+                          "(imprimante eteinte, hors portee, ou deja prise par un telephone)",
+                     attente_ms / 1000, (unsigned)longueur);
+            return false;
+        }
+        ESP_LOGI(TAG, "imprimante reprise en %.1f s", attente_ms / 1000.0);
     }
     /* mesurer = true : les compteurs de debit alimentent le journal periodique. */
     return ble_write_block(CONFIG_S002_WRITE_HANDLE, donnees, longueur, true);
@@ -1137,13 +1267,46 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
 {
     if (strcasecmp(commande, "PING") == 0) {
         snprintf(reponse, taille, "PONG");
+    } else if (strcasecmp(commande, "LIBERER") == 0) {
+        /* Rendre l'imprimante a l'instant : c'est ce que Home Assistant expose par un bouton. */
+        bool tenue = (s_conn_handle != BLE_HS_CONN_HANDLE_NONE);
+        liberer_liaison("demande du client");
+        snprintf(reponse, taille, tenue ? "LIBERE" : "DEJA_LIBRE");
+    } else if (strcasecmp(commande, "CONNECTER") == 0) {
+        s_liberation_voulue = false;
+        if (s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+            start_scan();
+            snprintf(reponse, taille, "RECHERCHE");
+        } else {
+            snprintf(reponse, taille, "DEJA_CONNECTE");
+        }
+    } else if (strncasecmp(commande, "LIBERATION ", 11) == 0) {
+        /* Reglage a chaud du delai d'inactivite : evite de reflasher pour passer de 120 s a 5 min.
+         * Volontairement en RAM et non en NVS : c'est le client qui le repose, et une valeur
+         * oubliee ne doit pas survivre a un redemarrage (le defaut du firmware reste la reference). */
+        int secondes = atoi(commande + 11);
+        if (secondes < 0) {
+            secondes = 0;
+        }
+        s_liberation_auto_s = secondes;
+        ESP_LOGW(TAG, "delai de liberation regle a %d s (0 = jamais)", s_liberation_auto_s);
+        snprintf(reponse, taille, "LIBERATION %dS", s_liberation_auto_s);
     } else if (strcasecmp(commande, "STATUS") == 0) {
+        int64_t inactif_us = s_dernier_echange_us > 0 ? esp_timer_get_time() - s_dernier_echange_us : 0;
+        /* La partition qui tourne est exposee volontairement : c'est la PREUVE qu'une mise a
+         * jour par le reseau a bien ete prise en compte (ota_0 -> ota_1), sans avoir a ouvrir
+         * l'imprimante ni a brancher un cable. */
         snprintf(reponse, taille,
-                 "etat=%s paquets=%d autorises=%d credits=%d attentes=%d timeouts=%d "
-                 "ecritures=%u annonces=%u rssi=%d memoire=%u",
-                 s_pret_a_imprimer ? "pret" : "attente", s_paquets, s_paquets_autorises,
-                 s_credits, s_flux_attentes, s_flux_timeouts, (unsigned)s_write_count,
-                 (unsigned)s_adv_vus, s_rssi_max, (unsigned)esp_get_free_heap_size());
+                 "etat=%s liaison=%s partition=%s inactif=%llds liberation=%ds paquets=%d "
+                 "autorises=%d credits=%d attentes=%d timeouts=%d ecritures=%u annonces=%u "
+                 "rssi=%d memoire=%u",
+                 s_pret_a_imprimer ? "pret" : "attente",
+                 s_conn_handle != BLE_HS_CONN_HANDLE_NONE ? "tenue" : "libre",
+                 esp_ota_get_running_partition()->label,
+                 (long long)(inactif_us / 1000000), s_liberation_auto_s, s_paquets,
+                 s_paquets_autorises, s_credits, s_flux_attentes, s_flux_timeouts,
+                 (unsigned)s_write_count, (unsigned)s_adv_vus, s_rssi_max,
+                 (unsigned)esp_get_free_heap_size());
     } else {
         snprintf(reponse, taille, "ERREUR commande_inconnue");
     }
@@ -1262,9 +1425,20 @@ void app_main(void)
     }
 #endif
 
+    /* Boucle de veille : cadence de 5 s pour que le delai de liberation soit respecte a peu
+     * pres, journal toutes les 30 s pour ne pas noyer la console. */
+    int battements_veille = 0;
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(30000));
-        journal_reseau();
-        stats_report();
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        if (s_liberation_auto_s > 0 && !s_liberation_voulue && s_pret_a_imprimer &&
+            s_conn_handle != BLE_HS_CONN_HANDLE_NONE && s_dernier_echange_us > 0 &&
+            (esp_timer_get_time() - s_dernier_echange_us) >
+                (int64_t)s_liberation_auto_s * 1000000) {
+            liberer_liaison("inactivite");
+        }
+        if (++battements_veille % 6 == 0) {
+            journal_reseau();
+            stats_report();
+        }
     }
 }

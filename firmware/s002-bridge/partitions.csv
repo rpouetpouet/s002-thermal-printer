@@ -3,12 +3,23 @@
 # Pourquoi ne pas garder la table par defaut : l'application idiomatique d'ESP-IDF reserve
 # 1 Mo a la partition « factory », or ce firmware embarque la pile Bluetooth NimBLE + le Wi-Fi
 # + lwIP + le TCP + la recette de test (79 Ko) : il fait 1,05 Mo et debordait de 28 Ko.
-# Le C3 Super Mini a 4 Mo de flash, on donne donc 2 Mo a l'application (aucune OTA ici :
-# la mise a jour se fait par USB).
+#
+# Pourquoi DEUX emplacements applicatifs (v2, 29/09/2026) : pour que la mise a jour se fasse par
+# le RESEAU et non plus par USB. Atteindre le port USB du C3 demande de demonter l'imprimante,
+# donc ce demontage doit etre le dernier. Le client envoie le binaire sur le meme port TCP,
+# l'ecriture se fait dans la partition INACTIVE : une coupure en cours de route ne peut pas
+# casser le firmware qui tourne.
 #
 # ATTENTION : la region NVS reste a 0x9000 sur 0x6000 octets, donc l'IDENTIFIANT WI-FI
-# PROVISIONNE N'EST PAS PERDU par ce changement de table.
+# PROVISIONNE N'EST PAS PERDU par ce changement de table. Ne jamais la reduire : tronquer une
+# NVS peut emporter les cles deja ecrites (il faudrait alors re-provisionner par USB).
+#
+# L'application demarre a 0x20000 (et non 0x10000) uniquement parce qu'otadata a besoin de
+# 0x2000 octets apres la NVS ; les 60 Ko libres entre 0x11000 et 0x20000 ne servent a rien, mais
+# gratter dedans voudrait dire toucher a la NVS ou a otadata.
 # Name,   Type, SubType, Offset,  Size,     Flags
 nvs,      data, nvs,     0x9000,  0x6000,
-phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 0x200000,
+otadata,  data, ota,     0xf000,  0x2000,
+phy_init, data, phy,     0x11000, 0x1000,
+ota_0,    app,  ota_0,   0x20000, 0x1d0000,
+ota_1,    app,  ota_1,   0x1f0000, 0x1d0000,

@@ -17,6 +17,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -39,6 +40,7 @@ static const char *TAG = "s002_tcp";
 
 static s002_reception_cb_t s_reception;
 static s002_commande_cb_t s_commande;
+static s002_ota_cb_t s_ota;
 static volatile bool s_client_actif;
 static volatile bool s_demarre;
 static uint32_t s_clients;
@@ -68,6 +70,18 @@ static void traiter_ligne(int fd, char *ligne)
 {
     char reponse[256] = {0};
     strncpy(s_derniere_cmd, ligne, sizeof(s_derniere_cmd) - 1);
+
+    /* La commande OTA est traitee ICI, pas dans le rappel : apres la ligne annoncee, le client
+     * envoie le binaire BRUT, que seul le detenteur du socket peut consommer. On repond d'abord
+     * « OTA PRET » pour que le client ne devine pas quand commencer. */
+    if (s_ota != NULL && strncasecmp(ligne, "OTA ", 4) == 0) {
+        size_t octets = (size_t)strtoul(ligne + 4, NULL, 10);
+        ESP_LOGW(TAG, "commande OTA : %u octets annonces", (unsigned)octets);
+        envoyer_texte(fd, "OTA PRET\n");
+        int r = s_ota(fd, octets);
+        envoyer_texte(fd, r == 0 ? "OTA OK REDEMARRAGE\n" : "OTA ECHEC\n");
+        return;
+    }
 
     if (s_commande != NULL) {
         s_commande(ligne, reponse, sizeof reponse);
@@ -190,7 +204,8 @@ static void tache_serveur(void *param)
 
 esp_err_t serveur_tcp_demarrer(uint16_t port,
                                s002_reception_cb_t reception,
-                               s002_commande_cb_t commande)
+                               s002_commande_cb_t commande,
+                               s002_ota_cb_t ota)
 {
     if (s_demarre) {
         return ESP_ERR_INVALID_STATE;
@@ -225,6 +240,7 @@ esp_err_t serveur_tcp_demarrer(uint16_t port,
 
     s_reception = reception;
     s_commande = commande;
+    s_ota = ota;
     s_demarre = true;
 
     if (xTaskCreate(tache_serveur, "serveur_tcp", 5120, (void *)(intptr_t)fd, 5, NULL) != pdPASS) {

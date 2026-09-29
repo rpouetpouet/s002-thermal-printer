@@ -99,4 +99,15 @@ menu "S002 bridge (v0)"
             Ce garde-fou evite de rester bloque si cette notification se perd : on envoie
             quand meme ces quelques paquets avant d'exiger un credit.
 
+    config S002_LIBERATION_INACTIF_S
+        int "Rendre la liaison BLE apres N secondes sans impression (0 = jamais)"
+        range 0 86400
+        default 120
+        help
+            L'imprimante n'accepte qu'UN client a la fois. Tant que le noeud tient la liaison, un
+            telephone ne peut pas s'y connecter : c'est le cas en permanence avec la v1, ou
+            `ble_gap_terminate` n'etait appele nulle part. A 0, comportement v1 (liaison tenue) ;
+            sinon le noeud la rend apres N secondes sans la moindre impression et la reprend tout
+            seul a la prochaine (environ 1 a 3 s).
+
 endmenu

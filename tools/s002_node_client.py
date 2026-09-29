@@ -98,6 +98,19 @@ class NoeudS002:
         except Exception as e:
             raise NoeudS002Erreur(f"Échec du ping: {e}")
 
+    def commande_texte(self, texte: str) -> str:
+        """Envoie une commande texte brute et retourne la reponse du noeud.
+
+        Le noeud v2 comprend PING, STATUS, LIBERER, CONNECTER et LIBERATION <secondes>.
+        `LIBERER` rend l'imprimante a l'instant (un telephone peut alors s'y connecter) ;
+        elle est reprise automatiquement a la prochaine impression.
+        """
+        try:
+            self._envoyer(texte.strip().upper().encode() + b'\n')
+            return self._recevoir_ligne().strip()
+        except Exception as e:
+            raise NoeudS002Erreur(f"Echec de la commande {texte!r}: {e}")
+
     def statut(self) -> dict:
         """Envoie STATUS et retourne le dictionnaire parsé de la réponse."""
         try:
@@ -179,8 +192,11 @@ def main():
     """Point d'entrée en ligne de commande."""
     parser = argparse.ArgumentParser(description='Client pour le nœud d\'impression S002')
     parser.add_argument('hote', help='Adresse IP ou nom d\'hôte du nœud')
-    parser.add_argument('commande', choices=['ping', 'statut', 'imprimer'], 
-                       help='Commande à exécuter')
+    parser.add_argument('commande',
+                       choices=['ping', 'statut', 'imprimer', 'liberer', 'connecter',
+                                'liberation'],
+                       help='Commande à exécuter (liberation prend les secondes dans '
+                            'fichier_raster)')
     parser.add_argument('fichier_raster', nargs='?', 
                        help='Fichier raster binaire (requis pour la commande imprimer)')
     parser.add_argument('--port', type=int, default=3333,
@@ -207,6 +223,15 @@ def main():
                 print(output)
                 return 0
                 
+            elif args.commande in ('liberer', 'connecter'):
+                print(noeud.commande_texte(args.commande.upper()))
+                return 0
+
+            elif args.commande == 'liberation':
+                secondes = args.fichier_raster or '120'
+                print(noeud.commande_texte(f'LIBERATION {secondes}'))
+                return 0
+
             elif args.commande == 'imprimer':
                 if not args.fichier_raster:
                     print("Erreur: fichier_raster requis pour la commande imprimer", 
