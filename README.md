@@ -1,10 +1,33 @@
 # ORGSTA S002 — imprimante thermique dans Home Assistant
 
+<p align="center">
+  <img src="custom_components/s002_printer/brand/logo.png" alt="ORGSTA S002" width="420">
+</p>
+
 Intégration custom Home Assistant pour les imprimantes thermiques **ORGSTA S002**
 (protocole propriétaire **YK/CUS**, et non ESC/POS). Elle permet d'imprimer du texte et
 des images depuis HA — automatisations, scripts, dashboard — **via la pile Bluetooth de
 Home Assistant**, donc **à travers un proxy BLE ESP32** (`bluetooth_proxy: active: true`)
 ou un adaptateur local, sans code spécifique.
+
+## Images de marque
+
+L'icône et le logo de l'intégration sont **embarqués dans le dépôt**, dans
+`custom_components/s002_printer/brand/` — depuis Home Assistant 2026.3 une intégration
+personnalisée peut fournir ses propres images, sans passer par le dépôt `home-assistant/brands`.
+
+| Fichier | Dimensions | Usage |
+| --- | --- | --- |
+| `icon.png` | 256×256 | icône de l'intégration (page *Intégrations*, appareils) |
+| `icon@2x.png` | 512×512 | version hDPI |
+| `logo.png` | 512×256 | logo paysage (en-tête) |
+| `logo@2x.png` | 1024×512 | version hDPI |
+
+Elles se régénèrent à l'identique :
+
+```bash
+python3 tools/make_brand.py      # nécessite Pillow
+```
 
 ## Pourquoi une intégration dédiée ?
 
