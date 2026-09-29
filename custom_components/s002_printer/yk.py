@@ -279,33 +279,65 @@ def text_raster(
     return bytes(255 - b for b in img.tobytes())
 
 
+def _est_binaire(img) -> bool:
+    """Vrai si l'image est déjà en noir et blanc franc (QR code, tracé, texte scanné).
+
+    Pourquoi : tramer une image déjà binaire détruit ses aplats et la rend illisible — un QR code
+    tramé ne se lit plus. On ne décide donc pas seulement sur la demande de l'appelant, on regarde
+    l'image. Le seuil est haut (98 % de pixels aux deux extrêmes) pour ne pas attraper une photo qui
+    aurait simplement un fond clair.
+    """
+    total = img.width * img.height
+    if total <= 0:
+        return True
+    hist = img.histogram()
+    extremes = sum(hist[:16]) + sum(hist[240:])
+    return extremes / total > 0.98
+
+
 def image_to_raster(
     donnees: bytes,
     dither: bool = False,
     invert: bool = False,
     width_dots: int = PRINT_WIDTH_DOTS,
+    enhance: bool = False,
 ) -> bytes:
     """Convertit une image (PNG/JPEG/…) en raster 1 bit pour l'imprimante.
 
     `dither=False` : seuillage franc (net, adapté au texte et aux traits).
     `dither=True`  : tramage Floyd-Steinberg (utile pour les photos).
+    `enhance=True` : prépare une photo avant de la réduire — étalement des niveaux
+    (`autocontrast`) puis accentuation des contours (`UnsharpMask`).
+
+    ⚠️ `enhance` est devenu le défaut côté service `print_image` (29/09/2026, variante A retenue par
+    Rich après comparaison sur papier). La raison : une photo au ciel clair avec un sujet blanc donne,
+    sans étalement, la même bouillie de points dans le ciel et sur le sujet — c'est ce qui était perçu
+    comme un manque de résolution, alors que la tête est bien à 300 dpi. **L'ordre compte : étaler et
+    accentuer AVANT la réduction à 576 points.**
+
     L'image est mise à l'échelle de la largeur d'impression (576 points) en conservant
     les proportions. Sortie : même format que l'imprimante (1 = noir, MSB d'abord).
     """
     import io
 
-    from PIL import Image, ImageOps
+    from PIL import Image, ImageFilter, ImageOps
 
     with Image.open(io.BytesIO(donnees)) as source:
         img = source.convert("L")
+        if enhance:
+            img = ImageOps.autocontrast(img, cutoff=1)
+            img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
         if img.width != width_dots:
             hauteur = max(1, round(img.height * width_dots / img.width))
             img = img.resize((width_dots, hauteur), Image.LANCZOS)
         if invert:
             img = ImageOps.invert(img)
-        img = img.convert("1") if dither else img.point(
-            lambda p: 255 if p > 128 else 0
-        ).convert("1")
+        # Le tramage est ignoré sur une image déjà binaire : il n'y a rien à tramer, et le faire
+        # dégraderait un QR code ou un tracé.
+        if dither and not _est_binaire(img):
+            img = img.convert("1")
+        else:
+            img = img.point(lambda p: 255 if p > 128 else 0).convert("1")
         # Pillow : bit à 1 = blanc → on inverse pour obtenir 1 = noir (format YK).
         return bytes(255 - b for b in img.tobytes())
 

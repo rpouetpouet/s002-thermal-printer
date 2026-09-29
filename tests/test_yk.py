@@ -165,6 +165,55 @@ p_float = yk.chunks(b"\xab" * 450, 200.0)
 verifier("taille de paquet flottante acceptée (selectors HA)", [len(x) for x in p_float] == [200, 200, 50],
          str([len(x) for x in p_float]))
 
+print("\n=== 7. Préparation des photos (variante A) et garde-fou image binaire")
+try:
+    import io as _io
+
+    from PIL import Image, ImageDraw
+
+    def _png(img) -> bytes:
+        tampon = _io.BytesIO()
+        img.save(tampon, format="PNG")
+        return tampon.getvalue()
+
+    # (a) image « photo » peu contrastée : un dégradé doux de 100 à 160 en niveaux de gris
+    photo = Image.new("L", (720, 480))
+    px = photo.load()
+    for y in range(480):
+        for x in range(720):
+            px[x, y] = 100 + int(60 * (x / 719))
+
+    sans = yk.image_to_raster(_png(photo), dither=True, enhance=False)
+    avec = yk.image_to_raster(_png(photo), dither=True, enhance=True)
+    verifier("enhance change le rendu d'une photo peu contrastée", sans != avec)
+    verifier("enhance + tramage donne plus d'encre (niveaux étalés)",
+              sum(bin(b).count("1") for b in avec) > sum(bin(b).count("1") for b in sans),
+              f"{sum(bin(b).count('1') for b in avec)} vs {sum(bin(b).count('1') for b in sans)}")
+    verifier("raster photo = largeur 576 points (72 o par ligne)",
+              len(avec) % 72 == 0 and len(avec) // 72 > 0, str(len(avec)))
+
+    # (b) image déjà binaire (QR code / tracé) : le tramage doit être IGNORÉ
+    bilevel = Image.new("L", (720, 480), 255)
+    dessin = ImageDraw.Draw(bilevel)
+    for i in range(0, 720, 40):
+        dessin.rectangle([i, 0, i + 20, 479], fill=0)
+    png_bilevel = _png(bilevel)
+    verifier("détection : image binaire reconnue",
+              yk._est_binaire(Image.open(_io.BytesIO(png_bilevel)).convert("L")))
+    verifier("détection : photo NON classée binaire",
+             not yk._est_binaire(Image.open(_io.BytesIO(_png(photo))).convert("L")))
+    a = yk.image_to_raster(png_bilevel, dither=True, enhance=False)
+    b = yk.image_to_raster(png_bilevel, dither=False, enhance=False)
+    verifier("image binaire : tramage demandé == seuil franc (QR protégé)", a == b)
+    c = yk.image_to_raster(png_bilevel, dither=True, enhance=True)
+    verifier("image binaire : le garde-fou tient aussi avec enhance", c == a)
+
+    # (c) photo : tramage et seuil franc doivent bien différer, sinon le garde-fou est trop large
+    d = yk.image_to_raster(_png(photo), dither=False, enhance=True)
+    verifier("photo : tramage != seuil franc (garde-fou non déclenché à tort)", d != avec)
+except ImportError:
+    print("  (Pillow absent : tests de préparation ignorés)")
+
 print("\n" + "=" * 70)
 if echecs:
     print(f"ECHECS ({len(echecs)}) : " + ", ".join(echecs))

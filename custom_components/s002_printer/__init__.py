@@ -236,7 +236,11 @@ def _async_register_services(hass: HomeAssistant) -> None:
         try:
             raster = yk.image_to_raster(
                 _decoder_base64(call.data["image"]),
-                dither=call.data.get("dither", False),
+                # Défauts = variante A retenue par Rich le 29/09/2026 (voir yk.image_to_raster).
+                # `dither: false` reste nécessaire pour une image déjà binaire si l'on veut forcer
+                # le seuil franc ; `enhance: false` pour imprimer l'image telle quelle.
+                dither=call.data.get("dither", True),
+                enhance=call.data.get("enhance", True),
                 invert=call.data.get("invert", False),
             )
         except Exception as err:  # noqa: BLE001

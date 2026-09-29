@@ -145,6 +145,28 @@ static volatile int s_liberation_auto_s = CONFIG_S002_LIBERATION_INACTIF_S;
  *   5 octets, controle de 5 octets en queue, charge a l'index 7 du corps, soit l'octet 12.
  * --------------------------------------------------------------------------------------- */
 static volatile int s_batterie_pct = -1;     /* -1 = jamais recue */
+
+/* Pourquoi le noeud a redemarre la derniere fois. Le 29/09/2026 il a redemarre APRES une
+ * impression de 1205 lignes (compteur d'ecritures remis a zero, batterie et trames d'etat
+ * reperdues) sans que rien ne le signale : un redemarrage muet est indiagnosticable, donc on
+ * expose la raison donnee par la puce (surtout BROWNOUT = chute d'alimentation, plausible avec
+ * l'USB du Raspberry Pi pendant une longue rafale Wi-Fi). */
+static const char *raison_redemarrage(void)
+{
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:  return "poweron";
+    case ESP_RST_EXT:      return "broche_ext";
+    case ESP_RST_SW:       return "logiciel";
+    case ESP_RST_PANIC:    return "PANIC";
+    case ESP_RST_INT_WDT:  return "watchdog_int";
+    case ESP_RST_TASK_WDT: return "watchdog_tache";
+    case ESP_RST_WDT:      return "watchdog_autre";
+    case ESP_RST_DEEPSLEEP:return "reveil";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_SDIO:     return "sdio";
+    default:               return "inconnue";
+    }
+}
 static volatile unsigned s_etats_vus;
 static volatile bool s_maintien;
 
@@ -1235,8 +1257,26 @@ static void wifi_start(void)
     xTaskCreate(tache_surveillance_reseau, "surveillance_reseau", 4096, NULL, 4, NULL);
 
     /* Pas de modem sleep : carte alimentée, et le power save Wi-Fi est la première cause de
-     * pics de latence — donc de blancs. */
+     * pics de latence — donc de blancs.
+     * ⚠️ Ne JAMAIS l'activer pour « économiser » ou pour régler un problème d'alimentation : le
+     * power save étale les émissions, donc il ajoute de la latence et ramène les blancs sur le
+     * papier. Le remède a un autre nom, ci-dessous. */
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+
+    /* Puissance d'émission RÉDUITE : 40 x 0,25 dBm = 10 dBm, au lieu des ~20 dBm par défaut.
+     *
+     * Pourquoi (mesuré le 29/09/2026) : pendant une impression de 1205 lignes (87 Ko de rafale
+     * Wi-Fi) le nœud a redémarré en pleine tâche. Instrumenté, `STATUS` a répondu
+     * `reset=BROWNOUT, uptime=6s` — une chute d'alimentation, reproduite deux fois, et
+     * UNIQUEMENT sur les grosses rafales (la même photo en 23 Ko passait sans broncher). Le nœud
+     * est alimenté par un port USB du Raspberry Pi : la marge de courant est mince, et c'est le
+     * pic d'émission Wi-Fi qui fait tomber la tension.
+     *
+     * Pourquoi c'est sans risque ICI : le point d'accès voit le nœud à -16 dBm, soit environ
+     * 60 dB de marge. Diviser la puissance par dix ne change rien au débit utile (le Wi-Fi
+     * s'adapte) et divise le pic de courant. Si le nœud devait un jour être déplacé loin du
+     * point d'accès, c'est ce réglage qu'il faudra relever — et le signaler par RSSI. */
+    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(40));
 
     ESP_LOGI(TAG, "Wi-Fi demarre (SSID \"%s\", power save DESACTIVE) : attente de l'adresse IP", ssid);
 }
@@ -1352,7 +1392,7 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
         snprintf(reponse, taille,
                  "etat=%s liaison=%s mode=%s maintien=%s batterie=%d etats=%u partition=%s "
                  "inactif=%llds liberation=%ds paquets=%d autorises=%d credits=%d attentes=%d "
-                 "timeouts=%d ecritures=%u annonces=%u rssi=%d memoire=%u",
+                 "timeouts=%d ecritures=%u annonces=%u rssi=%d memoire=%u reset=%s uptime=%us",
                  s_pret_a_imprimer ? "pret" : "attente",
                  s_conn_handle != BLE_HS_CONN_HANDLE_NONE ? "tenue" : "libre",
                  s_maintien ? "manuel" : "auto", s_maintien ? "oui" : "non",
@@ -1361,7 +1401,8 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
                  (long long)(inactif_us / 1000000), s_liberation_auto_s, s_paquets,
                  s_paquets_autorises, s_credits, s_flux_attentes, s_flux_timeouts,
                  (unsigned)s_write_count, (unsigned)s_adv_vus, s_rssi_max,
-                 (unsigned)esp_get_free_heap_size());
+                 (unsigned)esp_get_free_heap_size(), raison_redemarrage(),
+                 (unsigned)(esp_timer_get_time() / 1000000));
     } else {
         snprintf(reponse, taille, "ERREUR commande_inconnue");
     }

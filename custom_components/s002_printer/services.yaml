@@ -119,7 +119,11 @@ print_image:
   name: Impression d'une image
   description: >-
     Imprime une image PNG/JPEG fournie en base64, redimensionnée à la largeur
-    d'impression (576 points, proportions conservées).
+    d'impression (576 points, proportions conservées). Par défaut, la photo est préparée
+    (niveaux étalés + contours accentués) puis tramée : c'est le rendu retenu après
+    comparaison sur papier. Une image déjà en noir et blanc franc (QR code, tracé) n'est
+    jamais tramée, même si le tramage est demandé. Pour imprimer une photo en plus grand,
+    l'imprimer tournée d'un quart de tour : elle profite alors de la longueur du rouleau.
   fields:
     image:
       name: Image (base64)
@@ -128,10 +132,21 @@ print_image:
       selector:
         text:
           multiline: true
+    enhance:
+      name: Préparer la photo
+      description: >-
+        Étalement des niveaux puis accentuation des contours, appliqués avant la réduction à
+        576 points. Recommandé (et par défaut) pour une photo ; mettre à false pour imprimer
+        l'image telle quelle.
+      default: true
+      selector:
+        boolean:
     dither:
       name: Tramage
-      description: Tramage Floyd-Steinberg (recommandé pour les photos).
-      default: false
+      description: >-
+        Tramage Floyd-Steinberg, recommandé pour les photos. Ignoré automatiquement sur une
+        image déjà binaire (QR code, tracé), où il détruirait la lisibilité.
+      default: true
       selector:
         boolean:
     invert:

@@ -125,12 +125,29 @@ association.
 | `s002_printer.print_text` | Imprime les lignes fournies (`text`, `scale` 1-6, **défaut 3**) |
 | `s002_printer.feed` | Avance papier seule (`mm`) |
 | `s002_printer.print_raw` | Raster brut en base64 (72 o/ligne, 1 = noir) — reproductible à l'octet |
-| `s002_printer.print_image` | Image PNG/JPEG en base64, mise à l'échelle 576 points (`dither`, `invert`) |
+| `s002_printer.print_image` | Image PNG/JPEG en base64, mise à l'échelle 576 points (`enhance`, `dither`, `invert`) |
 | `s002_printer.diagnose` | Se connecte **sans imprimer** et renvoie le débit mesuré |
 
 Tous les services acceptent `address` (si plusieurs imprimantes) et renvoient un compte
 rendu avec **les mesures de débit** (`frames`, `avg_frame_ms`, `throughput_kbps`,
 `channel_handle`) : c'est ce qui permet de juger si la liaison tient la charge.
+
+### Rendu des photos
+
+Par défaut, `print_image` **prépare** la photo avant de la réduire à 576 points : étalement des niveaux
+(`autocontrast`) puis accentuation des contours (`UnsharpMask`), et enfin tramage Floyd-Steinberg.
+C'est le rendu retenu après comparaison sur papier : une photo au ciel clair avec un sujet blanc donne,
+sans étalement des niveaux, la même bouillie de points partout — perçu à tort comme un manque de
+résolution. `enhance: false` imprime l'image telle quelle, `dither: false` force le seuil franc.
+
+Une image **déjà en noir et blanc franc** (QR code, tracé, texte scanné) n'est **jamais** tramée, même
+si le tramage est demandé : le tramage y détruirait la lisibilité. La détection est automatique.
+
+**Imprimer une photo en plus grand** : la tête ne fait que 576 points de large (48,8 mm), on ne peut
+donc pas élargir. En revanche, en imprimant le raster **tourné d'un quart de tour**, la hauteur de la
+photo occupe la largeur du papier et sa largeur s'étale sur la longueur du rouleau : une photo
+1280×720 passe de 48,8 × 27,4 mm à **48,8 × 87,1 mm**, avec **1,8 fois plus de points par pixel
+source**. Il suffit de faire pivoter la bande pour la lire.
 
 ### Exemple d'automatisation
 
