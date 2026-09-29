@@ -71,7 +71,7 @@ static void traiter_ligne(int fd, char *ligne)
     /* 384 et non 256 : la chaine de STATUS a grandi au fil des versions (ajout de `reset=`, de
      * `uptime=` et de plusieurs compteurs) et depassait le tampon, tronquee EN SILENCE par
      * snprintf. La fin perdue etait justement la partie diagnostic. */
-    char reponse[384] = {0};
+    char reponse[512] = {0};   /* la trame d'etat en clair a rallonge la reponse STATUS */
     strncpy(s_derniere_cmd, ligne, sizeof(s_derniere_cmd) - 1);
 
     /* La commande OTA est traitee ICI, pas dans le rappel : apres la ligne annoncee, le client

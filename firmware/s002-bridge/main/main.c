@@ -159,6 +159,12 @@ static volatile int s_liberation_auto_s = CONFIG_S002_LIBERATION_INACTIF_S;
  * --------------------------------------------------------------------------------------- */
 static volatile int s_batterie_pct = -1;     /* -1 = jamais recue */
 
+/* La derniere trame d'etat, en clair. Elle sert a identifier par DIFFERENCE quel octet porte une
+ * information que l'on ne sait pas encore lire (le papier : l'APK nomme « OutOfPaper » et
+ * « PaperNearEmpty » mais ne dit pas l'index). Methode : capturer avec du papier, puis sans,
+ * et comparer les deux trames. */
+static char s_etat_hex[3 * 20 + 1];
+
 /* Pourquoi le noeud a redemarre la derniere fois. Le 29/09/2026 il a redemarre APRES une
  * impression de 1205 lignes (compteur d'ecritures remis a zero, batterie et trames d'etat
  * reperdues) sans que rien ne le signale : un redemarrage muet est indiagnosticable, donc on
@@ -943,6 +949,13 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
             if (n >= 13) {
                 uint8_t charge = buf[12];
                 s_etats_vus++;
+                {
+                    size_t m = (size_t)n > 20 ? 20 : (size_t)n;
+                    for (size_t i = 0; i < m; i++) {
+                        snprintf(&s_etat_hex[i * 3], 4, "%02x ", buf[i]);
+                    }
+                    s_etat_hex[m * 3] = '\0';
+                }
                 if (charge > 0 && charge <= 100) {
                     if (s_batterie_pct != (int)charge) {
                         ESP_LOGI(TAG, "  batterie : %u %%", (unsigned)charge);
@@ -1457,7 +1470,7 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
             "reset=%s uptime=%us etat=%s liaison=%s mode=%s maintien=%s batterie=%d etats=%u "
             "partition=%s inactif=%llds liberation=%ds paquets=%d autorises=%d credits=%d "
             "attentes=%d timeouts=%d ecritures=%u annonces=%u rssi=%d memoire=%u "
-                 "refus=%u trou_max=%dms trou_max_a=%u creux=%u",
+                 "refus=%u trou_max=%dms trou_max_a=%u creux=%u brut=%s",
             raison_redemarrage(), (unsigned)(esp_timer_get_time() / 1000000),
             s_pret_a_imprimer ? "pret" : "attente",
             s_conn_handle != BLE_HS_CONN_HANDLE_NONE ? "tenue" : "libre",
@@ -1469,7 +1482,7 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
             (unsigned)s_write_count, (unsigned)s_adv_vus, s_rssi_max,
             (unsigned)esp_get_free_heap_size(),
             (unsigned)s_refus, (int)(s_trou_max_us / 1000), (unsigned)s_trou_max_a,
-            (unsigned)s_trous_400);
+            (unsigned)s_trous_400, s_etat_hex);
         /* Une troncature muette a coute des heures de diagnostic : elle devient bruyante. */
         if (ecrits < 0 || (size_t)ecrits >= taille) {
             ESP_LOGW(TAG, "STATUS tronque : %d octets necessaires, tampon de %u",
