@@ -118,6 +118,7 @@ CHAMP_ETATS = "etats"            # nombre de trames d'état reçues (diagnostic)
 CHAMP_MAINTIEN = "maintien"      # "oui" = mode manuel / "non" = mode auto
 CHAMP_MODE = "mode"              # "manuel" / "auto"
 CHAMP_LIAISON = "liaison"        # "tenue" / "libre"
+CHAMP_BRUT = "brut"              # trame d'état brute en hexa (diagnostic, cf. bit de défaut)
 DEFAULT_TRANSPORT = TRANSPORT_PROXY
 TRANSPORTS = (TRANSPORT_PROXY, TRANSPORT_NODE)
 CONF_NODE_HOST = "node_host"

@@ -48,7 +48,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Entités exposées — uniquement pour le transport « node » (voir async_setup_entry) : c'est le
 # nœud qui voit la trame d'état de l'imprimante (batterie) et qui détient le mode de liaison.
-PLATFORMS: list[str] = ["sensor", "switch", "button"]
+PLATFORMS: list[str] = ["sensor", "binary_sensor", "switch", "button"]
 
 # Les entités retrouvent leur coordinateur par `hass.data[DOMAIN + "_coord"][entry_id]`. On ne le
 # range PAS dans hass.data[DOMAIN], qui contient déjà les imprimantes et que _resoudre() parcourt.
