@@ -255,7 +255,7 @@ class S002Printer:
     async def print_text(
         self,
         lines: list[str],
-        scale: int = 2,
+        scale: int = 3,
         margin_dots: int = 16,
         dry_run: bool = False,
     ) -> PrintResult:

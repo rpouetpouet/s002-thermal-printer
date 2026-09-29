@@ -122,7 +122,7 @@ association.
 | Service | Effet |
 | --- | --- |
 | `s002_printer.print_test` | Motif de validation (repères + 6 bandes), ≈ 14 mm de papier |
-| `s002_printer.print_text` | Imprime les lignes fournies (`text`, `scale` 1-6) |
+| `s002_printer.print_text` | Imprime les lignes fournies (`text`, `scale` 1-6, **défaut 3**) |
 | `s002_printer.feed` | Avance papier seule (`mm`) |
 | `s002_printer.print_raw` | Raster brut en base64 (72 o/ligne, 1 = noir) — reproductible à l'octet |
 | `s002_printer.print_image` | Image PNG/JPEG en base64, mise à l'échelle 576 points (`dither`, `invert`) |
@@ -141,7 +141,7 @@ action:
       text: |
         Portail ouvert
         28/09 18:42
-      scale: 2
+      scale: 3
     response_variable: cr
   - service: system_log.write
     data:

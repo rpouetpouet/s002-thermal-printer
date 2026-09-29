@@ -62,7 +62,7 @@ SERVICE_BASE_SCHEMA = vol.Schema(
 PRINT_TEXT_SCHEMA = SERVICE_BASE_SCHEMA.extend(
     {
         vol.Required("text"): cv.string,
-        vol.Optional("scale", default=2): vol.All(vol.Coerce(int), vol.Range(min=1, max=6)),
+        vol.Optional("scale", default=3): vol.All(vol.Coerce(int), vol.Range(min=1, max=6)),
         # Marge symétrique gauche/droite, en points (16 ≈ 1,35 mm).
         vol.Optional("margin_dots", default=16): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=200)

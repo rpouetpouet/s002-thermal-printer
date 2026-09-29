@@ -63,6 +63,25 @@ class TestPoliceTexte(unittest.TestCase):
             "et avec la police condensée retenue (5,0 % mesuré)",
         )
 
+    def test_texte_plus_noir_a_la_taille_par_defaut(self):
+        """La taille par défaut du service est 3 (2 auparavant) : elle doit sortir nettement noire."""
+        raster = yk.text_raster(["Liste de courses", "Abricot, été, à côté"], scale=3)
+        self.assertGreaterEqual(
+            _encre(raster), 9.0,
+            "à l'échelle 3 le texte doit dépasser 9 % de points noirs (10,9 % mesuré sur planche)",
+        )
+
+    def test_seuil_de_binarisation_suffisant(self):
+        """Le seuil retenu (SEUIL_ENCRE) doit rester dans la zone vérifiée sur planche."""
+        self.assertEqual(yk.SEUIL_ENCRE, 170)
+
+    def test_inversion_toujours_correcte(self):
+        """Le chemin d'inversion a été réécrit (dessin en niveaux de gris) : il doit inverser."""
+        normal = yk.text_raster(["Texte"], scale=3)
+        inverse = yk.text_raster(["Texte"], scale=3, invert=True)
+        self.assertGreater(_encre(inverse), 50.0, "invert=True doit donner un fond noir majoritaire")
+        self.assertLess(_encre(normal), 50.0)
+
     def test_accents_pas_des_carres_vides(self):
         """Un caractère absent d'une police est rendu en carré (« tofu »).
 

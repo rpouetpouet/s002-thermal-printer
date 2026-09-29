@@ -34,7 +34,7 @@ print_text:
     scale:
       name: Échelle
       description: Multiplicateur entier de la taille de police (1 à 6).
-      default: 2
+      default: 3
       selector:
         number:
           min: 1

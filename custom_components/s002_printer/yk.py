@@ -56,6 +56,15 @@ _POLICES_SYSTEME = (
 )
 
 
+# Seuil de binarisation du texte dessiné. Dessiner directement dans une image « 1 » laissait
+# Pillow trancher à 128, ce qui donnait des fûts trop maigres. À 170, les pixels de bord du
+# lissage sont conservés : les lettres s'épaississent un peu sans boucher leurs contre-formes.
+# Vérifié sur planche aux deux extrêmes — échelle 1 (2,0 % de points noirs) et échelle 3 (10,9 %),
+# les deux parfaitement lisibles ; au-delà de 190 les lettres bavent, et un épaississement
+# géométrique d'une passe monte à 15,7 % et rend le texte illisible.
+SEUIL_ENCRE = 170
+
+
 def _police_texte(taille: int):
     """Renvoie la police grasse du texte imprimé.
 
@@ -252,7 +261,9 @@ def text_raster(
 
     height = padding_dots * 2 + line_height * max(1, len(lines))
 
-    img = Image.new("1", (PRINT_WIDTH_DOTS, height), 1)   # 1 = blanc dans Pillow
+    # Niveaux de gris puis binarisation au seuil SEUIL_ENCRE (voir sa définition) : le texte
+    # sort plus noir qu'en dessinant directement dans une image « 1 ».
+    img = Image.new("L", (PRINT_WIDTH_DOTS, height), 255)   # 255 = blanc
     draw = ImageDraw.Draw(img)
     y = padding_dots
     for text in lines:
@@ -260,7 +271,9 @@ def text_raster(
         y += line_height
 
     if invert:
-        img = img.point(lambda p: 0 if p else 1)
+        img = img.point(lambda p: 255 - p)
+
+    img = img.point(lambda p: 0 if p < SEUIL_ENCRE else 255).convert("1")
 
     # Pillow : 0 = noir, 1 = blanc sur une image "1" ; le raster YK veut 1 = noir.
     return bytes(255 - b for b in img.tobytes())
