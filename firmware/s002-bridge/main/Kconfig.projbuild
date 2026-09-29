@@ -50,4 +50,36 @@ menu "S002 bridge (v0)"
         range 8 200
         default 24
 
+    config S002_TEST_RECETTE
+        bool "Imprimer la recette embarquee (test LONG) au lieu du motif"
+        default y
+        help
+            1099 lignes = 93 mm d'avance. C'est le VRAI test de continuite : le motif de 24
+            lignes ne couvre que 2 mm de papier. Le raster est produit par tools/make_recipe.py
+            via le rendu de l'integration HA (yk.text_raster), donc le papier du test est
+            exactement ce que HA enverrait.
+
+    config S002_ITVL_MIN
+        int "Intervalle de connexion minimum (unites de 1,25 ms)"
+        range 6 3200
+        default 6
+        help
+            6 = 7,5 ms. Debit utile = 200 o par intervalle : a 15 ms on plafonne vers 15 Ko/s
+            alors que l'imprimante consomme 17 Ko/s a 20 mm/s (blanc par assecchage du tampon).
+            Forcer 6/6 vise 8-10 ms par ecriture, soit ~25 Ko/s.
+
+    config S002_ITVL_MAX
+        int "Intervalle de connexion maximum (unites de 1,25 ms)"
+        range 6 3200
+        default 12
+
+    config S002_FLOW_AUTORISATION_INITIALE
+        int "Paquets autorises avant le premier credit de l'imprimante"
+        range 0 64
+        default 8
+        help
+            L'imprimante annonce son premier credit (`01 07` = 7 paquets) apres l'abonnement.
+            Ce garde-fou evite de rester bloque si cette notification se perd : on envoie
+            quand meme ces quelques paquets avant d'exiger un credit.
+
 endmenu

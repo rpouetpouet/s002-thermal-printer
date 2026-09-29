@@ -64,6 +64,24 @@ static const char *TAG = "s002";
 #define WRITE_TIMEOUT_MS 3000
 #define TOLERANCE_MS 400        /* tolérance de pause mesurée de l'imprimante */
 
+/* Contrôle de flux par crédits — MÊME mécanisme que l'intégration HA (ble.py), mais en
+ * COMPTABILISANT les paquets au lieu d'attendre à intervalle fixe.
+ *
+ * L'imprimante autorise les paquets par crédits envoyés sur ff03 : `01 05` = 5 paquets,
+ * `01 07` = 7 (crédit initial). On envoie tant qu'on reste dans l'autorisation cumulée, et on
+ * attend un crédit dès qu'on la dépasserait. C'est le robinet réel de l'imprimante.
+ *
+ * ⚠️ Ne PAS remplacer par « une attente tous les N paquets » : mesuré le 29/09/2026, avec N=3
+ * les crédits n'arrivent pas encore (un crédit tous les ~5 paquets) -> 3 attentes sur 3 soldées
+ * par un échec, contrôle de flux ABANDONNÉ, débit remonté de 9,3 à 11,5 Ko/s et retour des
+ * lignes écrasées. N=5 fonctionnait, la comptabilité fait mieux (elle s'adapte au rythme réel).
+ *
+ * L'ignorer complètement (416 écritures à 12,5 Ko/s sans jamais attendre) donnait de façon
+ * INTERMITTENTE des lignes écrasées : même firmware, mêmes données, une fois mangé / une fois
+ * propre -> signature d'un débordement de tampon. */
+#define FLOW_TIMEOUT_MS 300     /* au-delà : l'imprimante tamponne, on n'attend pas plus */
+#define FLOW_ABANDON_APRES 3    /* échecs cumulés avant d'abandonner le contrôle de flux */
+
 #define MAX_SVCS 8
 #define MAX_NOTIFY 4
 #define CCCD_UUID16 0x2902
@@ -78,7 +96,7 @@ static SemaphoreHandle_t s_write_done;  /* libéré UNIQUEMENT par la fin d'une 
 static int64_t s_t0;
 static int64_t s_worst_us, s_best_us = INT64_MAX, s_total_us;
 static uint32_t s_write_count, s_write_timeouts;
-static uint32_t s_notify_rx, s_credits;
+static uint32_t s_notify_rx;
 
 /* Découverte séquentielle */
 enum { ST_IDLE, ST_SVC, ST_CHR, ST_DSC, ST_SUB, ST_PRINT };
@@ -94,6 +112,15 @@ static bool s_write_handle_confirmee, s_pret_a_imprimer;
  * zero octet a la console, cause reelle = rien a journaliser). */
 static uint32_t s_adv_vus;
 static int8_t s_rssi_max = -127;
+
+/* Contrôle de flux */
+static volatile int s_credits;
+static volatile int s_paquets;             /* paquets ecrits */
+static volatile int s_paquets_autorises;   /* cumul des credits recus, en paquets */
+static SemaphoreHandle_t s_credit_event;
+static int s_flux_attentes, s_flux_waits, s_flux_timeouts;
+static int64_t s_flux_attente_us, s_flux_attente_max_us;
+static bool s_flux_abandonne;
 
 /** Cherche le nom annonce (types AD 0x08 = nom abrege, 0x09 = nom complet) et le compare.
  *  L'imprimante S002 annonce son nom ; sa MAC, elle, est une adresse privee NON RESOLVABLE
@@ -154,6 +181,14 @@ static void stats_report(void)
              (unsigned)s_write_timeouts, (unsigned)s_notify_rx, (unsigned)s_credits);
     ESP_LOGI(TAG, "    reference : proxy ESPHome 116 ms/paquet | Pi en direct ~4 ms/paquet "
                   "| tolerance 400 ms");
+    ESP_LOGI(TAG, "    flux : %d attentes | %d credits obtenus | %d sans credit | attente moy "
+                  "%.0f ms | max %.0f ms %s",
+             s_flux_attentes, s_flux_waits, s_flux_timeouts,
+             s_flux_waits ? (double)s_flux_attente_us / s_flux_waits / 1000.0 : 0.0,
+             s_flux_attente_max_us / 1000.0,
+             s_flux_abandonne ? "| CONTROLE DE FLUX ABANDONNE" : "");
+    ESP_LOGI(TAG, "    paquets : %d ecrits / %d autorises par l'imprimante", s_paquets,
+             s_paquets_autorises);
 }
 
 /* --------------------------------------------------------------------------------------
@@ -198,6 +233,45 @@ static int write_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
 /** Écrit un bloc en paquets de CHUNK_SIZE, une écriture en vol à la fois.
  *  `mesurer=false` pour les écritures de service (abonnement CCCD) qu'on ne veut pas
  *  mélanger aux mesures du chemin d'impression. */
+/** Attend un crédit de flux, à l'identique de l'intégration HA (`_attendre_credit`).
+ *  Un crédit non reçu dans le délai ne doit JAMAIS bloquer l'impression (l'imprimante
+ *  tamponne) : après FLOW_ABANDON_APRES échecs cumulés, le contrôle de flux est abandonné. */
+static bool attendre_credit(void)
+{
+    if (s_flux_abandonne) {
+        return false;
+    }
+    s_flux_attentes++;
+    xSemaphoreTake(s_credit_event, 0);     /* attente vierge : les crédits passés sont déjà comptés */
+    const int avant = s_paquets_autorises;
+    const int64_t t0 = esp_timer_get_time();
+    while (s_paquets_autorises == avant) {
+        if (xSemaphoreTake(s_credit_event, pdMS_TO_TICKS(FLOW_TIMEOUT_MS)) != pdTRUE) {
+            break;
+        }
+        if (esp_timer_get_time() - t0 >= (int64_t)FLOW_TIMEOUT_MS * 1000) {
+            break;
+        }
+    }
+    const int64_t attente = esp_timer_get_time() - t0;
+    const bool obtenu = (s_paquets_autorises != avant);
+    if (obtenu) {
+        s_flux_waits++;
+        s_flux_attente_us += attente;
+        if (attente > s_flux_attente_max_us) {
+            s_flux_attente_max_us = attente;
+        }
+    } else {
+        s_flux_timeouts++;
+        if (s_flux_timeouts >= FLOW_ABANDON_APRES) {
+            s_flux_abandonne = true;
+            ESP_LOGW(TAG, "controle de flux ABANDONNE apres %d attentes sans credit — "
+                          "l'imprimante tamponne, on continue sans caler", s_flux_timeouts);
+        }
+    }
+    return obtenu;
+}
+
 static bool ble_write_block(uint16_t handle, const uint8_t *data, size_t len, bool mesurer)
 {
     size_t offset = 0;
@@ -217,10 +291,19 @@ static bool ble_write_block(uint16_t handle, const uint8_t *data, size_t len, bo
             return false;
         }
         if (!mesurer) {
-            /* Écriture sans callback : on laisse respirer la pile avant la suivante. */
-            vTaskDelay(pdMS_TO_TICKS(50));
+            /* Écriture sans callback : on laisse respirer la pile avant la suivante (120 ms :
+             * en dessous, la procédure GATT suivante est refusée avec rc=6). */
+            vTaskDelay(pdMS_TO_TICKS(120));
         }
         offset += n;
+        s_paquets++;
+        /* On n'attend QUE si l'on depasse ce que l'imprimante a autorise : c'est son robinet. */
+        int securite = 0;
+        while (!s_flux_abandonne && s_paquets > s_paquets_autorises && securite++ < 64) {
+            if (!attendre_credit()) {
+                break;
+            }
+        }
     }
     return true;
 }
@@ -302,6 +385,80 @@ static void print_test_pattern(uint8_t write_handle)
 }
 
 /* --------------------------------------------------------------------------------------
+ * Test LONG : le raster de la recette, embarque dans le binaire (tools/make_recipe.py)
+ *
+ * Le motif de 24 lignes ne couvre que 2 mm de papier : il prouve que les tranches se
+ * raccordent, pas que le debit tient sur une longue impression. Ici : 1099 lignes = 93 mm.
+ *
+ * ⚠️ LEÇON MESURÉE (29/09/2026) — c'est le DÉBIT EN TROP qui casse le papier, pas le manque :
+ *   * 20 mm/s x 11,81 lignes/mm x 72 o = 17 006 o/s est la vitesse MAXIMALE de la tête, pas sa
+ *     consommation réelle : l'imprimante se règle elle-même par crédits de flux et consomme en
+ *     vrai ~9 000 o/s (mesuré : 83 crédits pour 79 128 o, soit un crédit tous les ~5 paquets) ;
+ *   * en poussant 12 500 o/s SANS respecter les crédits, le tampon déborde et les lignes
+ *     sortent ÉCRASÉES — et de façon INTERMITTENTE (même firmware, même données : une fois
+ *     mangé, une fois propre). 12 écritures passaient, 416 non ;
+ *   * en respectant les crédits, le débit se cale à ~9 200 o/s et le papier sort propre.
+ * Le proxy, lui, délivrait 1 700 o/s : bien plus lent que la consommation réelle -> blancs.
+ * -------------------------------------------------------------------------------------- */
+extern const uint8_t recette_bin_start[] asm("_binary_recette_bin_start");
+extern const uint8_t recette_bin_end[] asm("_binary_recette_bin_end");
+
+#define DEBIT_IMPRIMANTE_O_S 17006.0  /* 20 mm/s x 11,81 lignes/mm x 72 o */
+
+static void print_recette(uint8_t write_handle)
+{
+    const size_t octets = (size_t)(recette_bin_end - recette_bin_start);
+    const int lignes_total = (int)(octets / BYTES_PER_LINE);
+    const int par_trame = CONFIG_S002_LINES_PER_FRAME;
+    const int total_tranches = (lignes_total + par_trame - 1) / par_trame;
+
+    ESP_LOGI(TAG, "--- TEST LONG : recette %d lignes = %.1f mm = %u octets, %d tranches ---",
+             lignes_total, lignes_total / 11.81, (unsigned)octets, total_tranches);
+    ESP_LOGI(TAG, "    l'imprimante consomme %.0f o/s ; le lien doit faire au moins autant",
+             DEBIT_IMPRIMANTE_O_S);
+
+    const uint8_t tok = 0x01;
+    send_frame(write_handle, MSG_TOKEN, &tok, 1);
+    vTaskDelay(pdMS_TO_TICKS(SETTLE_AFTER_TOKEN_MS));
+    const uint8_t largeur[2] = {0x40, 0x02};
+    send_frame(write_handle, MSG_PAPER_SIZE, largeur, 2);
+    vTaskDelay(pdMS_TO_TICKS(SETTLE_AFTER_WIDTH_MS));
+
+    const int64_t t_debut = esp_timer_get_time();
+    int64_t ecoule = 0;
+    int tranche = 0;
+    for (int i = 0; i < lignes_total; i += par_trame) {
+        int n = (lignes_total - i) < par_trame ? (lignes_total - i) : par_trame;
+        send_frame(write_handle, MSG_IMAGE_SLICE, &recette_bin_start[i * BYTES_PER_LINE],
+                   (size_t)n * BYTES_PER_LINE);
+        tranche++;
+        if (tranche % 20 == 0) {
+            ecoule = esp_timer_get_time() - t_debut;
+            double debit = (double)((size_t)tranche * par_trame * BYTES_PER_LINE) * 1e6 / ecoule;
+            ESP_LOGI(TAG, "    %d/%d tranches | %.2f s | %.0f o/s | %s",
+                     tranche, total_tranches, ecoule / 1e6, debit,
+                     debit < DEBIT_IMPRIMANTE_O_S ? "EN RETARD" : "dans les temps");
+        }
+    }
+    int64_t duree = esp_timer_get_time() - t_debut;
+
+    const uint8_t avance[2] = {200, 0};
+    send_frame(write_handle, MSG_FEED, avance, 2);
+
+    double debit_final = (double)octets * 1e6 / (double)duree;
+    ESP_LOGI(TAG, "=== RECETTE ENVOYEE : %u o en %.2f s = %.0f o/s (besoin %.0f o/s) ===",
+             (unsigned)octets, duree / 1e6, debit_final, DEBIT_IMPRIMANTE_O_S);
+    ESP_LOGI(TAG, "  debit calcule sur la vitesse MAX de la tete : %.0f%% "
+                  "(le papier se juge sur le respect des credits, pas sur ce pourcentage)",
+             100.0 * debit_final / DEBIT_IMPRIMANTE_O_S);
+    if (s_flux_timeouts > 0) {
+        ESP_LOGW(TAG, "  %d attente(s) de credit sans reponse : debit probablement trop eleve",
+                 s_flux_timeouts);
+    }
+    stats_report();
+}
+
+/* --------------------------------------------------------------------------------------
  * Découverte séquentielle : services → caractéristiques → descripteurs → abonnement
  * -------------------------------------------------------------------------------------- */
 static void etape_suivante(void);
@@ -359,7 +516,19 @@ static int chr_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
     if (chr->val_handle == CONFIG_S002_WRITE_HANDLE) {
         s_write_handle_confirmee = true;
     }
+    /* On ne s'abonne QU'AUX canaux notify du service qui porte le handle d'écriture.
+     * L'imprimante expose ff00 DEUX fois (une copie « service0001 » sans usage) : s'abonner
+     * aux 4 canaux faisait attendre des écritures sur les descripteurs de la copie inutilisée
+     * — 3 timeouts de 3 s avant chaque impression (mesuré le 29/09/2026). */
+    const bool service_du_canal =
+        (CONFIG_S002_WRITE_HANDLE >= s_svc_start[s_svc_i]) &&
+        (CONFIG_S002_WRITE_HANDLE <= s_svc_end[s_svc_i]);
     if ((chr->properties & BLE_GATT_CHR_PROP_NOTIFY) && s_notify_trouves < MAX_NOTIFY) {
+        if (!service_du_canal) {
+            ESP_LOGI(TAG, "  notify 0x%04x ignore : service 0x%04x..0x%04x sans usage (copie de ff00)",
+                     chr->val_handle, s_svc_start[s_svc_i], s_svc_end[s_svc_i]);
+            return 0;
+        }
         s_notify_h[s_notify_trouves] = chr->val_handle;
         s_notify_svc_end[s_notify_trouves] = s_svc_end[s_svc_i];
         s_notify_trouves++;
@@ -437,6 +606,11 @@ static void etape_suivante(void)
                 const uint8_t cccd_val[2] = {0x01, 0x00}; /* notifications activees */
                 ESP_LOGI(TAG, "  abonnement notify 0x%04x (CCCD 0x%04x)", s_notify_h[s_notify_i],
                          s_cccd_h[s_notify_i]);
+                /* ⚠️ mesurer=false : NimBLE ne rappelle PAS le callback de fin pour une écriture
+                 * de descripteur CCCD — mesurer=true ne rapportait donc que des timeouts de 3 s
+                 * (2 x 3 s perdus avant chaque impression, mesuré le 29/09/2026), alors que
+                 * l'abonnement fonctionnait bel et bien. On écrit donc sans mesure, en laissant
+                 * 120 ms entre deux abonnements pour ne pas empiler deux procédures GATT. */
                 ble_write_block(s_cccd_h[s_notify_i], cccd_val, 2, false);
             } else {
                 ESP_LOGW(TAG, "  notify 0x%04x sans CCCD : pas d'abonnement possible",
@@ -507,15 +681,16 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         struct ble_gap_conn_params cp = {
             .scan_itvl = 0x0060,
             .scan_window = 0x0030,
-            .itvl_min = 6,               /* 6 x 1,25 ms = 7,5 ms — le levier principal */
-            .itvl_max = 12,              /* 12 x 1,25 ms = 15 ms */
+            .itvl_min = CONFIG_S002_ITVL_MIN,  /* 6 = 7,5 ms : le levier principal */
+            .itvl_max = CONFIG_S002_ITVL_MAX,  /* 12 = 15 ms par defaut */
             .latency = 0,
             .supervision_timeout = 400,  /* 400 x 10 ms = 4 s */
             .min_ce_len = 0,
             .max_ce_len = 0,
         };
         int rc = ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &s_target, 5000, &cp, gap_event_cb, NULL);
-        ESP_LOGI(TAG, "connexion demandee (rc=%d) : intervalle demande 7,5-15 ms", rc);
+        ESP_LOGI(TAG, "connexion demandee (rc=%d) : intervalle demande %.1f-%.1f ms", rc,
+                 CONFIG_S002_ITVL_MIN * 1.25, CONFIG_S002_ITVL_MAX * 1.25);
         return 0;
     }
 
@@ -544,8 +719,8 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         rc = ble_gap_set_data_len(s_conn_handle, 251, 2120);
         ESP_LOGI(TAG, "DLE demande : 251 o / 2120 us (rc=%d)", rc);
         struct ble_gap_upd_params upd = {
-            .itvl_min = 6,               /* 7,5 ms */
-            .itvl_max = 12,              /* 15 ms */
+            .itvl_min = CONFIG_S002_ITVL_MIN,
+            .itvl_max = CONFIG_S002_ITVL_MAX,
             .latency = 0,
             .supervision_timeout = 400,  /* 4 s */
             .min_ce_len = 0,
@@ -600,8 +775,12 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
             /* Crédit de flux : l'imprimante acquitte par `01 05` (et `01 07` au premier flux).
              * ⚠️ Un crédit n'est PAS une fin d'écriture : ne surtout pas libérer le sémaphore
              * d'écriture ici (cela désynchroniserait la sérialisation des écritures). */
-            if (n >= 2 && buf[0] == 0x01 && (buf[1] == 0x05 || buf[1] == 0x07)) {
+            if (n >= 2 && buf[0] == 0x01 && buf[1] > 0) {
+                /* Le second octet est le NOMBRE DE PAQUETS autorises : `01 05` = 5,
+                 * `01 07` = 7 (crédit initial). On cumule. */
                 s_credits++;
+                s_paquets_autorises += buf[1];
+                xSemaphoreGive(s_credit_event);
             }
         }
         return 0;
@@ -710,6 +889,8 @@ void app_main(void)
     s_target.type = BLE_ADDR_RANDOM; /* valeur par défaut ; écrasée par l'annonce réelle */
 
     s_write_done = xSemaphoreCreateBinary();
+    s_credit_event = xSemaphoreCreateBinary();
+    s_paquets_autorises = CONFIG_S002_FLOW_AUTORISATION_INITIALE;
 
     wifi_start();
 
@@ -739,7 +920,11 @@ void app_main(void)
                  CONFIG_S002_WRITE_HANDLE);
     }
 
-    print_test_pattern(CONFIG_S002_WRITE_HANDLE);
+    if (CONFIG_S002_TEST_RECETTE) {
+        print_recette(CONFIG_S002_WRITE_HANDLE);
+    } else {
+        print_test_pattern(CONFIG_S002_WRITE_HANDLE);
+    }
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(30000));
