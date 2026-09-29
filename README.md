@@ -206,7 +206,7 @@ plus trompeuses que leur absence.
 | `chunk_size` | 200 | Taille des paquets d'écriture BLE (20-237 ; MTU 240) |
 | `lines_per_frame` | **8** | Lignes par trame. 8 ≈ 160 ms via proxy ; 40 (le maximum protocolaire) ≈ 870 ms → **blancs de 4 mm garantis** |
 | `frame_pause_ms` | 0 | Pause entre trames (≤ 400 ms, sinon blanc garanti) |
-| `feed_before_mm` / `feed_after_mm` | 0 | Marges d'avance autour de l'image |
+| `feed_before_mm` / `feed_after_mm` | 0 / **15** | Marges d'avance autour de l'image. Les 15 mm après impression laissent de quoi couper ou déchirer la bande sans entamer le contenu ; mettre 0 pour désactiver. |
 
 ### Choisir le transport : `proxy` (BLE) ou `node` (réseau)
 

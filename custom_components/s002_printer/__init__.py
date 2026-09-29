@@ -25,6 +25,7 @@ from .const import (
     CONF_CHUNK_SIZE,
     CONF_WRITE_RESPONSE,
     CONF_FEED_AFTER_MM,
+    DEFAULT_FEED_AFTER_MM,
     CONF_FEED_BEFORE_MM,
     CONF_FRAME_PAUSE_MS,
     CONF_NAME,
@@ -123,7 +124,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # régulier) — c'est l'arbitrage mesuré sur ce matériel.
         frame_budget_ms=options.get("frame_budget_ms", FRAME_BUDGET_MS),
         feed_before_mm=options.get(CONF_FEED_BEFORE_MM, 0.0),
-        feed_after_mm=options.get(CONF_FEED_AFTER_MM, 0.0),
+        feed_after_mm=options.get(CONF_FEED_AFTER_MM, DEFAULT_FEED_AFTER_MM),
         transport=options.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
         node_host=options.get(CONF_NODE_HOST, ""),
         node_port=options.get(CONF_NODE_PORT, DEFAULT_NODE_PORT),

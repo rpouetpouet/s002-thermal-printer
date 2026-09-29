@@ -37,6 +37,7 @@ from .const import (
     CONF_NAME,
     CONF_WRITE_RESPONSE,
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_FEED_AFTER_MM,
     DEFAULT_FRAME_PAUSE_MS,
     DEFAULT_LINES_PER_FRAME,
     DEFAULT_NODE_PORT,
@@ -128,7 +129,8 @@ def _schema_options(defauts: dict[str, Any]) -> vol.Schema:
                 CONF_FEED_BEFORE_MM, default=defauts.get(CONF_FEED_BEFORE_MM, 0.0)
             ): SEL_DISTANCE,
             vol.Optional(
-                CONF_FEED_AFTER_MM, default=defauts.get(CONF_FEED_AFTER_MM, 0.0)
+                CONF_FEED_AFTER_MM,
+                  default=defauts.get(CONF_FEED_AFTER_MM, DEFAULT_FEED_AFTER_MM),
             ): SEL_DISTANCE,
             # Transport : le même protocole YK passe soit par le Bluetooth de HA (proxy),
             # soit par un nœud ESP32-C3 dédié joint en TCP sur le réseau local.

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 import sys
 
 RACINE = pathlib.Path(__file__).resolve().parent.parent
@@ -122,9 +123,34 @@ for service, nom_schema in association.items():
     if oubliees:
         manquantes[service] = oubliees
 
+# ---------------------------------------------------------------- avance papier
+# Contrat : après CHAQUE impression, 15 mm d'avance, pour pouvoir couper ou déchirer proprement
+# sans entamer le contenu. Le défaut doit venir d'une constante unique, sinon il dérive entre le
+# formulaire d'options et l'exécution : c'est exactement comme ça qu'une valeur annoncée finit par
+# ne pas être celle appliquée.
+const_src = (RACINE / "custom_components" / "s002_printer" / "const.py").read_text(encoding="utf-8")
+init_src = (RACINE / "custom_components" / "s002_printer" / "__init__.py").read_text(encoding="utf-8")
+flow_src = (RACINE / "custom_components" / "s002_printer" / "config_flow.py").read_text(
+    encoding="utf-8")
+
 print()
 verifier("des schémas de service sont bien déclarés", len(schemas) >= 4,
          f"{len(schemas)} trouvés")
+verifier(
+    "la constante d'avance papier vaut 15 mm",
+    re.search(r"DEFAULT_FEED_AFTER_MM\s*=\s*15\.0", const_src) is not None,
+    "l'avance après impression doit valoir 15 mm",
+)
+verifier(
+    "l'exécution utilise cette constante (et pas un défaut 0 en dur)",
+    re.search(r"CONF_FEED_AFTER_MM,\s*DEFAULT_FEED_AFTER_MM", init_src) is not None,
+    "sans quoi les entrées existantes, dont les options n'ont pas la clé, n'auraient aucune avance",
+)
+verifier(
+    "le formulaire d'options utilise la même constante",
+    re.search(r"CONF_FEED_AFTER_MM,\s*DEFAULT_FEED_AFTER_MM", flow_src) is not None,
+    "défaut du formulaire différent de celui de l'exécution = valeur annoncée non appliquée",
+)
 verifier(
     "les options enhance et gamma sont déclarées dans PRINT_IMAGE_SCHEMA",
     {"enhance", "gamma"} <= schemas.get("PRINT_IMAGE_SCHEMA", set()),

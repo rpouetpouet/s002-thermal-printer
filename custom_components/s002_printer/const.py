@@ -78,6 +78,11 @@ CONF_CHUNK_SIZE = "chunk_size"
 CONF_FRAME_PAUSE_MS = "frame_pause_ms"
 CONF_FEED_BEFORE_MM = "feed_before_mm"
 CONF_FEED_AFTER_MM = "feed_after_mm"
+
+# Avance papier APRÈS chaque impression : 15 mm, de quoi couper ou déchirer proprement la bande sans
+# entamer le contenu imprimé. Sans cette marge, la déchirure tombe dans l'image. Modifiable dans les
+# options de l'entrée (0 mm pour désactiver).
+DEFAULT_FEED_AFTER_MM = 15.0
 CONF_WRITE_RESPONSE = "write_response"
 
 # Transport d'impression — deux chemins, même protocole YK, même code d'impression :
