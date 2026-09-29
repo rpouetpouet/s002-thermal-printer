@@ -42,7 +42,11 @@ def noeud(essais: int = 5) -> dict:
             with socket.create_connection(("192.168.42.62", 3333), timeout=10) as s:
                 s.sendall(b"STATUS\n")
                 s.settimeout(6)
+                # On lit jusqu'au SILENCE du serveur, et non jusqu'à un mot-clé : s'arrêter sur
+                # « uptime= » coupe la réponse avant les chiffres (52 au lieu de 528). 0,6 s sans
+                # donnée = réponse terminée.
                 morceaux = []
+                s.settimeout(0.6)
                 while True:
                     try:
                         bout = s.recv(4096)
@@ -51,8 +55,6 @@ def noeud(essais: int = 5) -> dict:
                     if not bout:
                         break
                     morceaux.append(bout.decode(errors="replace"))
-                    if "uptime=" in "".join(morceaux):
-                        break
             brut = "".join(morceaux).strip()
             if "etat=" in brut and "uptime=" in brut:
                 return {m.split("=", 1)[0]: m.split("=", 1)[1] for m in brut.split() if "=" in m}
