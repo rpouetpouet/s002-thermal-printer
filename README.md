@@ -29,6 +29,12 @@ Elles se régénèrent à l'identique :
 python3 tools/make_brand.py      # nécessite Pillow
 ```
 
+La source est le visuel de l'appareil, versionné dans `tools/brand-source/s002-printer.jpg` :
+le fond est retiré automatiquement (le fond du visuel est du blanc pur alors que la carrosserie
+descend plus bas, donc un remplissage par diffusion le détoure sans entamer la coque), puis la
+garde la **plus grande région connexe** élimine le second objet présent sur le visuel et les
+poussières de compression. Le mot-symbole est mesuré pour ne jamais être tronqué.
+
 ## Pourquoi une intégration dédiée ?
 
 L'ORGSTA S002 ne parle **pas ESC/POS** : son protocole a été décodé depuis
