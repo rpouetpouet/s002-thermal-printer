@@ -77,3 +77,19 @@ CONF_FRAME_PAUSE_MS = "frame_pause_ms"
 CONF_FEED_BEFORE_MM = "feed_before_mm"
 CONF_FEED_AFTER_MM = "feed_after_mm"
 CONF_WRITE_RESPONSE = "write_response"
+
+# Transport d'impression — deux chemins, même protocole YK, même code d'impression :
+#   * « proxy » : le Bluetooth de Home Assistant via les proxies ESP32 (chemin historique).
+#     Mesuré à 116 ms par paquet sur ce réseau, ce qui dépasse la tolérance de pause de
+#     l'imprimante (400 ms) et produit des blancs sur les longues impressions.
+#   * « node »  : un ESP32-C3 dédié, posé près de l'imprimante, joignable en TCP sur le réseau
+#     local. Mesuré à ~14 ms par paquet, et c'est LUI qui gère les crédits de flux annoncés par
+#     l'imprimante (Home Assistant se contente de lui transmettre les trames).
+CONF_TRANSPORT = "transport"
+TRANSPORT_PROXY = "proxy"
+TRANSPORT_NODE = "node"
+DEFAULT_TRANSPORT = TRANSPORT_PROXY
+TRANSPORTS = (TRANSPORT_PROXY, TRANSPORT_NODE)
+CONF_NODE_HOST = "node_host"
+CONF_NODE_PORT = "node_port"
+DEFAULT_NODE_PORT = 3333

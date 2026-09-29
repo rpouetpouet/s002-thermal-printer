@@ -43,6 +43,13 @@
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
+#include <stdio.h>
+#include <string.h>
+
+#include "esp_netif.h"
+#include "nvs.h"
+
+#include "serveur_tcp.h"
 #include "os/os_mbuf.h"
 
 static const char *TAG = "s002";
@@ -351,6 +358,7 @@ static void build_test_raster(uint8_t *raster, int lignes)
 /* --------------------------------------------------------------------------------------
  * Séquence d'impression validée : token → pause → largeur → pause → tranches → avance
  * -------------------------------------------------------------------------------------- */
+#ifndef CONFIG_S002_MODE_SERVEUR
 static void print_test_pattern(uint8_t write_handle)
 {
     const int lignes_total = CONFIG_S002_TEST_PATTERN_LINES;
@@ -457,6 +465,7 @@ static void print_recette(uint8_t write_handle)
     }
     stats_report();
 }
+#endif /* !CONFIG_S002_MODE_SERVEUR : fin du banc de mesure (motif de test + recette) */
 
 /* --------------------------------------------------------------------------------------
  * Découverte séquentielle : services → caractéristiques → descripteurs → abonnement
@@ -834,21 +843,111 @@ static void on_sync(void)
 /* --------------------------------------------------------------------------------------
  * Wi-Fi (facultatif en v0 : sans SSID, on mesure le BLE seul, sans coexistence radio)
  * -------------------------------------------------------------------------------------- */
+/* --------------------------------------------------------------------------------------
+ * Provisionnement Wi-Fi : les identifiants vivent en NVS, PAS dans le binaire.
+ *
+ * Pourquoi : un mot de passe Wi-Fi compile en dur finit dans l'image, dans l'historique de
+ * build et dans les sauvegardes. Ici on l'ecrit une fois par la console USB
+ * (`WIFI <ssid> <motdepasse>`), sur la machine qui a le cable — le secret ne transite par
+ * aucun chat, aucun depot, aucun fichier de configuration versionne.
+ * ------------------------------------------------------------------------------------ */
+#define NVS_ESPACE_WIFI "s002"
+
+static bool nvs_lire_wifi(char *ssid, size_t taille_ssid, char *pass, size_t taille_pass)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_ESPACE_WIFI, NVS_READONLY, &h) != ESP_OK) {
+        return false;
+    }
+    size_t l1 = taille_ssid, l2 = taille_pass;
+    bool ok = (nvs_get_str(h, "ssid", ssid, &l1) == ESP_OK) && l1 > 1;
+    if (ok) {
+        /* Un mot de passe absent est legitime (reseau ouvert) : on ne le traite pas en echec. */
+        if (nvs_get_str(h, "pass", pass, &l2) != ESP_OK) {
+            pass[0] = '\0';
+        }
+    }
+    nvs_close(h);
+    return ok;
+}
+
+static esp_err_t nvs_ecrire_wifi(const char *ssid, const char *pass)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_ESPACE_WIFI, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(h, "ssid", ssid);
+    if (err == ESP_OK) {
+        err = nvs_set_str(h, "pass", pass);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+/* Le serveur TCP est demarre par l'evenement « adresse IP obtenue », jamais avant : lwIP
+ * n'existe qu'a partir de la, et appeler socket() trop tot fait planter la pile
+ * (assert tcpip_send_msg_wait_sem, « Invalid mbox ») — constate au premier flash de la v1. */
+static bool tcp_reception(const uint8_t *donnees, size_t longueur);
+static void tcp_commande(const char *commande, char *reponse, size_t taille);
+static bool s_serveur_demarre;
+
+static void sur_ip_obtenue(void *arg, esp_event_base_t base, int32_t id, void *donnees)
+{
+    (void)arg; (void)base; (void)id;
+    const ip_event_got_ip_t *evenement = (const ip_event_got_ip_t *)donnees;
+    char ip_txt[16];
+    ESP_LOGI(TAG, "Wi-Fi : adresse IP %s",
+             esp_ip4addr_ntoa(&evenement->ip_info.ip, ip_txt, sizeof ip_txt));
+
+    if (s_serveur_demarre) {
+        return;
+    }
+    if (serveur_tcp_demarrer(CONFIG_S002_PORT_TCP, tcp_reception, tcp_commande) == ESP_OK) {
+        s_serveur_demarre = true;
+        ESP_LOGI(TAG, "serveur TCP en ecoute sur le port %d", CONFIG_S002_PORT_TCP);
+    } else {
+        ESP_LOGE(TAG, "serveur TCP : demarrage impossible sur le port %d", CONFIG_S002_PORT_TCP);
+    }
+}
+
 static void wifi_start(void)
 {
-    if (strlen(CONFIG_S002_WIFI_SSID) == 0) {
-        ESP_LOGW(TAG, "aucun SSID configure : mesure BLE SANS Wi-Fi (coexistence non sollicitee)");
+    char ssid[33] = {0}, pass[65] = {0};
+    /* NVS d'abord (provisionnement sur place), Kconfig ensuite (banc de mesure). */
+    if (nvs_lire_wifi(ssid, sizeof ssid, pass, sizeof pass)) {
+        ESP_LOGI(TAG, "Wi-Fi : identifiants lus en NVS");
+    } else {
+        strncpy(ssid, CONFIG_S002_WIFI_SSID, sizeof ssid - 1);
+        strncpy(pass, CONFIG_S002_WIFI_PASSWORD, sizeof pass - 1);
+    }
+
+    if (strlen(ssid) == 0) {
+        /* Sans identifiants, la pile reseau n'est pas initialisee : demarrer le serveur ici
+         * ferait planter lwIP. On ne demarre donc rien et on dit comment provisionner. */
+        ESP_LOGW(TAG, "aucun SSID : le noeud ne sera PAS joignable en TCP");
+        ESP_LOGW(TAG, "  provisionner par la console USB : WIFI <ssid> <motdepasse>");
         return;
     }
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
+
+    /* Nom DHCP : le noeud apparait sous un nom lisible dans la liste des baux, ce qui evite
+     * d'avoir a retrouver son IP au hasard. */
+    esp_netif_t *netif = esp_netif_create_default_wifi_sta();
+    esp_netif_set_hostname(netif, "s002-noeud");
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                              sur_ip_obtenue, NULL));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     wifi_config_t wc = {0};
-    strncpy((char *)wc.sta.ssid, CONFIG_S002_WIFI_SSID, sizeof(wc.sta.ssid) - 1);
-    strncpy((char *)wc.sta.password, CONFIG_S002_WIFI_PASSWORD, sizeof(wc.sta.password) - 1);
+    strncpy((char *)wc.sta.ssid, ssid, sizeof(wc.sta.ssid) - 1);
+    strncpy((char *)wc.sta.password, pass, sizeof(wc.sta.password) - 1);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -856,7 +955,8 @@ static void wifi_start(void)
     /* Pas de modem sleep : carte alimentée, et le power save Wi-Fi est la première cause de
      * pics de latence — donc de blancs. */
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
-    ESP_LOGI(TAG, "Wi-Fi demarre (SSID \"%s\", power save DESACTIVE)", CONFIG_S002_WIFI_SSID);
+
+    ESP_LOGI(TAG, "Wi-Fi demarre (SSID \"%s\", power save DESACTIVE) : attente de l'adresse IP", ssid);
 }
 
 static bool parse_mac(const char *s, uint8_t out[6])
@@ -869,6 +969,90 @@ static bool parse_mac(const char *s, uint8_t out[6])
         out[i] = (uint8_t)v[i];
     }
     return true;
+}
+
+/* --------------------------------------------------------------------------------------
+ * Serveur TCP (v1) : le noeud devient joignable sur le reseau local.
+ *
+ * Le partage des roles ne change pas : le client (Home Assistant, ou bien l'outil
+ * tools/s002_node_client.py du depot) construit les trames YK, et le noeud se contente de les
+ * ecrire en Bluetooth — c'est LUI qui gere les credits de flux annonces par l'imprimante.
+ * ------------------------------------------------------------------------------------ */
+static bool tcp_reception(const uint8_t *donnees, size_t longueur)
+{
+    if (!s_pret_a_imprimer) {
+        ESP_LOGW(TAG, "TCP : %u octets recus mais imprimante pas encore prete — bloc ignore",
+                 (unsigned)longueur);
+        return false;
+    }
+    /* mesurer = true : les compteurs de debit alimentent le journal periodique. */
+    return ble_write_block(CONFIG_S002_WRITE_HANDLE, donnees, longueur, true);
+}
+
+/* Reponse du noeud a une commande texte : ce qu'il SAIT de lui-meme. Utile au diagnostic,
+ * mais ce n'est PAS une preuve d'impression (seule la trame d'etat 0x10 de l'imprimante
+ * l'est). */
+static void tcp_commande(const char *commande, char *reponse, size_t taille)
+{
+    if (strcasecmp(commande, "PING") == 0) {
+        snprintf(reponse, taille, "PONG");
+    } else if (strcasecmp(commande, "STATUS") == 0) {
+        snprintf(reponse, taille,
+                 "etat=%s paquets=%d autorises=%d credits=%d attentes=%d timeouts=%d "
+                 "ecritures=%u annonces=%u rssi=%d memoire=%u",
+                 s_pret_a_imprimer ? "pret" : "attente", s_paquets, s_paquets_autorises,
+                 s_credits, s_flux_attentes, s_flux_timeouts, (unsigned)s_write_count,
+                 (unsigned)s_adv_vus, s_rssi_max, (unsigned)esp_get_free_heap_size());
+    } else {
+        snprintf(reponse, taille, "ERREUR commande_inconnue");
+    }
+}
+
+/* Console USB : sert UNE fois, a provisionner le reseau sans jamais ecrire le mot de passe
+ * dans le binaire (voir nvs_ecrire_wifi). Le mot de passe n'est jamais journalise. */
+static void console_task(void *param)
+{
+    char ligne[160];
+    (void)param;
+    ESP_LOGI(TAG, "console : WIFI <ssid> <motdepasse>  pour provisionner,  INFO  pour l'etat");
+    while (fgets(ligne, sizeof ligne, stdin) != NULL) {
+        size_t n = strlen(ligne);
+        while (n > 0 && (ligne[n - 1] == '\n' || ligne[n - 1] == '\r')) {
+            ligne[--n] = '\0';
+        }
+        if (n == 0) {
+            continue;
+        }
+        if (strncasecmp(ligne, "WIFI ", 5) == 0) {
+            char *ssid = ligne + 5;
+            char *pass = strchr(ssid, ' ');
+            if (pass != NULL) {
+                *pass++ = '\0';
+            }
+            esp_err_t err = nvs_ecrire_wifi(ssid, pass != NULL ? pass : "");
+            ESP_LOGI(TAG, "provisionnement Wi-Fi : ssid=\"%s\" -> %s", ssid, esp_err_to_name(err));
+            if (err == ESP_OK) {
+                /* Pas de redemarrage : on bascule la station a chaud, la session BLE en cours
+                 * n'est pas interrompue. */
+                wifi_config_t wc = {0};
+                strncpy((char *)wc.sta.ssid, ssid, sizeof(wc.sta.ssid) - 1);
+                strncpy((char *)wc.sta.password, pass != NULL ? pass : "",
+                        sizeof(wc.sta.password) - 1);
+                esp_wifi_set_config(WIFI_IF_STA, &wc);
+                esp_wifi_disconnect();
+                esp_wifi_connect();
+                ESP_LOGI(TAG, "Wi-Fi : reconnexion demandee");
+            }
+        } else if (strcasecmp(ligne, "INFO") == 0) {
+            char tampon[192];
+            serveur_tcp_etat(tampon, sizeof tampon);
+            ESP_LOGI(TAG, "etat : %s", tampon);
+        } else {
+            ESP_LOGW(TAG, "commande inconnue : \"%s\" (attendu : WIFI <ssid> <motdepasse> | INFO)",
+                     ligne);
+        }
+    }
+    vTaskDelete(NULL);
 }
 
 void app_main(void)
@@ -893,6 +1077,10 @@ void app_main(void)
     s_paquets_autorises = CONFIG_S002_FLOW_AUTORISATION_INITIALE;
 
     wifi_start();
+
+    /* Le serveur TCP n'est PAS demarre ici : il l'est par sur_ip_obtenue (voir wifi_start),
+     * seul moment ou la pile reseau existe reellement. */
+    xTaskCreate(console_task, "console", 4096, NULL, 3, NULL);
 
     ESP_ERROR_CHECK(nimble_port_init());
     ble_hs_cfg.sync_cb = on_sync;
@@ -920,11 +1108,17 @@ void app_main(void)
                  CONFIG_S002_WRITE_HANDLE);
     }
 
+#ifdef CONFIG_S002_MODE_SERVEUR
+    /* Mode noeud reseau : on n'imprime rien de nous-memes, c'est le client TCP qui commande.
+     * Le banc de mesure reste accessible en desactivant cette option. */
+    ESP_LOGI(TAG, "mode serveur : en attente des trames du client (port %d)", CONFIG_S002_PORT_TCP);
+#else
     if (CONFIG_S002_TEST_RECETTE) {
         print_recette(CONFIG_S002_WRITE_HANDLE);
     } else {
         print_test_pattern(CONFIG_S002_WRITE_HANDLE);
     }
+#endif
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(30000));

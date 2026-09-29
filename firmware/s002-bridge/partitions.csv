@@ -1,0 +1,14 @@
+# Table de partitions du noeud d'impression S002.
+#
+# Pourquoi ne pas garder la table par defaut : l'application idiomatique d'ESP-IDF reserve
+# 1 Mo a la partition « factory », or ce firmware embarque la pile Bluetooth NimBLE + le Wi-Fi
+# + lwIP + le TCP + la recette de test (79 Ko) : il fait 1,05 Mo et debordait de 28 Ko.
+# Le C3 Super Mini a 4 Mo de flash, on donne donc 2 Mo a l'application (aucune OTA ici :
+# la mise a jour se fait par USB).
+#
+# ATTENTION : la region NVS reste a 0x9000 sur 0x6000 octets, donc l'IDENTIFIANT WI-FI
+# PROVISIONNE N'EST PAS PERDU par ce changement de table.
+# Name,   Type, SubType, Offset,  Size,     Flags
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 0x200000,

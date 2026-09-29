@@ -28,8 +28,11 @@ from . import yk
 from .ble import S002Transport, S002Error
 from .const import (
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_NODE_PORT,
+    DEFAULT_TRANSPORT,
     DEFAULT_FRAME_PAUSE_MS,
     FRAME_BUDGET_MS,
+    TRANSPORT_NODE,
     DEFAULT_WRITE_RESPONSE,
     MAX_LINES_PER_FRAME,
     MSG_IMAGE_SLICE,
@@ -81,6 +84,9 @@ class S002Printer:
         frame_budget_ms: int = FRAME_BUDGET_MS,
         feed_before_mm: float = 0.0,
         feed_after_mm: float = 0.0,
+        transport: str = DEFAULT_TRANSPORT,
+        node_host: str = "",
+        node_port: int = DEFAULT_NODE_PORT,
     ) -> None:
         self.hass = hass
         self.address = address.upper()
@@ -94,6 +100,32 @@ class S002Printer:
         self.frame_budget_ms = max(50, int(frame_budget_ms))
         self.feed_before_mm = feed_before_mm
         self.feed_after_mm = feed_after_mm
+        self.transport = transport
+        self.node_host = (node_host or "").strip()
+        self.node_port = int(node_port)
+
+    def _creer_transport(self, forcer_ble: bool = False):
+        """Fabrique le transport à utiliser pour cette impression.
+
+        Le reste du code ne connaît pas la différence : les deux transports exposent
+        `connect()`, `write_frame()` et `stats`. Le choix se fait par entrée (option
+        « transport »), ce qui permet de basculer entre le proxy BLE et le nœud réseau dédié
+        sans réinstaller l'intégration.
+        """
+        if not forcer_ble and self.transport == TRANSPORT_NODE:
+            if not self.node_host:
+                raise S002Error(
+                    "transport « node » sélectionné mais aucune adresse de nœud renseignée "
+                    "(option « node_host »)"
+                )
+            # Import paresseux : le chemin Bluetooth reste utilisable même si ce module
+            # avait un problème (et inversement).
+            from .node import S002NodeTransport
+
+            return S002NodeTransport(self.node_host, self.node_port)
+        return S002Transport(
+            self.hass, self.address, self.name, self.chunk_size, self.write_response
+        )
 
     async def print_raster(self, raster: bytes, dry_run: bool = False) -> PrintResult:
         """Imprime un raster 1 bit (1 = noir, bit de poids fort = premier point)."""
@@ -121,9 +153,7 @@ class S002Printer:
 
         async with _verrou(self.address):
             debut = time.monotonic()
-            transport = S002Transport(
-                self.hass, self.address, self.name, self.chunk_size, self.write_response
-            )
+            transport = self._creer_transport()
             try:
                 await transport.connect()
 
@@ -236,7 +266,7 @@ class S002Printer:
         """Avance papier seule (unité ≈ 0,1 mm)."""
         resultat = PrintResult(address=self.address)
         async with _verrou(self.address):
-            transport = S002Transport(self.hass, self.address, self.name, self.chunk_size)
+            transport = self._creer_transport()
             try:
                 await transport.connect()
                 await transport.write_frame(yk.frame_token(0))
@@ -254,9 +284,7 @@ class S002Printer:
         Sert de premier test depuis un proxy BLE : si les canaux `ff02` et les crédits
         de flux apparaissent, le passage par proxy est fonctionnel.
         """
-        transport = S002Transport(
-            self.hass, self.address, self.name, self.chunk_size, self.write_response
-        )
+        transport = self._creer_transport(forcer_ble=True)
         await transport.connect()
         try:
             # on ne consomme aucun papier : simple lecture de l'état annoncé

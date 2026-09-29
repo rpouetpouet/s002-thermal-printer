@@ -27,6 +27,9 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_ADDRESS,
+    CONF_NODE_HOST,
+    CONF_NODE_PORT,
+    CONF_TRANSPORT,
     CONF_CHUNK_SIZE,
     CONF_FEED_AFTER_MM,
     CONF_FEED_BEFORE_MM,
@@ -36,6 +39,10 @@ from .const import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_FRAME_PAUSE_MS,
     DEFAULT_LINES_PER_FRAME,
+    DEFAULT_NODE_PORT,
+    DEFAULT_TRANSPORT,
+    TRANSPORT_NODE,
+    TRANSPORT_PROXY,
     DEFAULT_WRITE_RESPONSE,
     FRAME_BUDGET_MS,
     MAX_FRAME_BUDGET_MS,
@@ -80,6 +87,24 @@ SEL_DISTANCE = selector.NumberSelector(
 )
 
 
+SEL_TRANSPORT = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=[
+            selector.SelectOptionDict(
+                value=TRANSPORT_PROXY, label="Bluetooth via proxy ESP32 (historique)"
+            ),
+            selector.SelectOptionDict(
+                value=TRANSPORT_NODE, label="Nœud réseau dédié (TCP) — recommandé"
+            ),
+        ],
+        mode=selector.SelectSelectorMode.DROPDOWN,
+    )
+)
+SEL_PORTE = selector.NumberSelector(
+    selector.NumberSelectorConfig(min=1, max=65535, mode=selector.NumberSelectorMode.BOX)
+)
+
+
 def _schema_options(defauts: dict[str, Any]) -> vol.Schema:
     """Réglages de transport, partagés entre la création et les options."""
     return vol.Schema(
@@ -105,6 +130,16 @@ def _schema_options(defauts: dict[str, Any]) -> vol.Schema:
             vol.Optional(
                 CONF_FEED_AFTER_MM, default=defauts.get(CONF_FEED_AFTER_MM, 0.0)
             ): SEL_DISTANCE,
+            # Transport : le même protocole YK passe soit par le Bluetooth de HA (proxy),
+            # soit par un nœud ESP32-C3 dédié joint en TCP sur le réseau local.
+            vol.Optional(
+                CONF_TRANSPORT, default=defauts.get(CONF_TRANSPORT, DEFAULT_TRANSPORT)
+            ): SEL_TRANSPORT,
+            # Utilisés seulement si le transport « node » est choisi.
+            vol.Optional(CONF_NODE_HOST, default=defauts.get(CONF_NODE_HOST, "")): cv.string,
+            vol.Optional(
+                CONF_NODE_PORT, default=defauts.get(CONF_NODE_PORT, DEFAULT_NODE_PORT)
+            ): SEL_PORTE,
             # bool : sérialisable tel quel par HA (cv.boolean).
             vol.Optional(
                 CONF_WRITE_RESPONSE,
@@ -154,6 +189,9 @@ class S002ConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_FEED_BEFORE_MM: user_input[CONF_FEED_BEFORE_MM],
                         CONF_FEED_AFTER_MM: user_input[CONF_FEED_AFTER_MM],
                         CONF_WRITE_RESPONSE: user_input[CONF_WRITE_RESPONSE],
+                        CONF_TRANSPORT: user_input[CONF_TRANSPORT],
+                        CONF_NODE_HOST: user_input.get(CONF_NODE_HOST, ""),
+                        CONF_NODE_PORT: user_input[CONF_NODE_PORT],
                     },
                 )
 

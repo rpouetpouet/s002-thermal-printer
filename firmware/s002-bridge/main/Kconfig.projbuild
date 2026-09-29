@@ -73,6 +73,23 @@ menu "S002 bridge (v0)"
         range 6 3200
         default 12
 
+    config S002_MODE_SERVEUR
+        bool "Mode noeud reseau (serveur TCP), aucune impression automatique"
+        default y
+        help
+            En mode serveur, le firmware ouvre un serveur TCP et attend les trames envoyees par
+            un client (Home Assistant ou tools/s002_node_client.py). Rien n'est imprime au
+            demarrage. Desactiver cette option pour revenir au banc de mesure, qui imprime le
+            motif de test (ou la recette si S002_TEST_RECETTE est active) des le demarrage.
+
+    config S002_PORT_TCP
+        int "Port du serveur TCP"
+        range 1024 65535
+        default 3333
+        help
+            Port d'ecoute du noeud. C'est ce port qu'il faut renseigner cote Home Assistant
+            (option "node_port") ou dans tools/s002_node_client.py.
+
     config S002_FLOW_AUTORISATION_INITIALE
         int "Paquets autorises avant le premier credit de l'imprimante"
         range 0 64

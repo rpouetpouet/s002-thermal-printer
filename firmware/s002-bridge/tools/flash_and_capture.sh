@@ -7,7 +7,7 @@
 # ⚠️ Le port est detecte dynamiquement : apres un reset la carte se re-enumere et le noyau peut
 # lui donner /dev/ttyACM1 au lieu de ttyACM0. Un port code en dur = capture muette en silence.
 ESP="$HOME/esptool-venv/bin/python -m esptool"
-BIN="$HOME/s002-bridge-v0.bin"
+BIN="${BIN:-$HOME/s002-bridge-v1.bin}"   # image fusionnee complete (debut 0x0)
 DUREE="${1:-120}"
 
 trouver_port() {

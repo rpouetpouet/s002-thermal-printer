@@ -18,6 +18,9 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import (
     CONF_ADDRESS,
+    CONF_NODE_HOST,
+    CONF_NODE_PORT,
+    CONF_TRANSPORT,
     CONF_CHUNK_SIZE,
     CONF_WRITE_RESPONSE,
     CONF_FEED_AFTER_MM,
@@ -27,6 +30,8 @@ from .const import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_FRAME_PAUSE_MS,
     DEFAULT_LINES_PER_FRAME,
+    DEFAULT_NODE_PORT,
+    DEFAULT_TRANSPORT,
     DEFAULT_WRITE_RESPONSE,
     DOMAIN,
     FRAME_BUDGET_MS,
@@ -102,6 +107,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         frame_budget_ms=options.get("frame_budget_ms", FRAME_BUDGET_MS),
         feed_before_mm=options.get(CONF_FEED_BEFORE_MM, 0.0),
         feed_after_mm=options.get(CONF_FEED_AFTER_MM, 0.0),
+        transport=options.get(CONF_TRANSPORT, DEFAULT_TRANSPORT),
+        node_host=options.get(CONF_NODE_HOST, ""),
+        node_port=options.get(CONF_NODE_PORT, DEFAULT_NODE_PORT),
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = imprimante
     _LOGGER.info("S002 %s configurée (%s)", adresse, donnees.get(CONF_NAME, "S002"))
