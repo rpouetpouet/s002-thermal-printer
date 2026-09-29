@@ -49,6 +49,10 @@ class S002LibererBluetooth(S002Entite, ButtonEntity):
         }
 
     async def async_press(self) -> None:
+        # Libérer est une décision de l'utilisateur : l'intention « maintenir » doit tomber, sans
+        # quoi la réconciliation du coordinateur rétablirait le maintien dans la minute et
+        # annulerait ce bouton.
+        self.coordinator.voulu_maintien = False
         try:
             await self.coordinator.imprimante.liberer_bluetooth()
         except S002Error as err:

@@ -16,6 +16,8 @@ from trame import (  # noqa: E402
     BIT_REFUS,
     OCTET_REFUS,
     batterie,
+    faut_reappliquer,
+    maintien_actif,
     octets,
     parser_status,
     refus_impression,
@@ -104,6 +106,24 @@ verifier("les valeurs texte aussi", c["partition"] == "ota_1" and c["etat"] == "
 verifier("une reponse illisible leve une erreur",
          (lambda: (parser_status("rien du tout"), False)[1] if False else _leve("rien du tout"))(),
          "pas d'erreur")
+
+print()
+print("le maintien de liaison : quand faut-il le retablir apres un redemarrage du noeud ?")
+MAINTENU = {"maintien": "oui"}
+PERDU = {"maintien": "non"}
+verifier("aucune intention exprimee -> on ne touche a rien", faut_reappliquer(None, PERDU) is False)
+verifier("l'utilisateur l'avait demande et le noeud l'a perdu -> on retablit",
+         faut_reappliquer(True, PERDU) is True)
+verifier("l'utilisateur l'avait demande et le noeud le fait encore -> rien a faire",
+         faut_reappliquer(True, MAINTENU) is False)
+verifier("REGLE A SENS UNIQUE : on ne force jamais l'ARRET, meme si le noeud l'a active",
+         faut_reappliquer(False, MAINTENU) is False)
+verifier("intention d'arreter + noeud deja arrete -> rien a faire",
+         faut_reappliquer(False, PERDU) is False)
+verifier("le node peut dire oui de trois facons", all(maintien_actif(v) for v in
+         ({"maintien": "oui"}, {"maintien": "true"}, {"maintien": "1"})))
+verifier("et non autrement", not any(maintien_actif(v) for v in
+         ({"maintien": "non"}, {"maintien": ""}, {}, {"maintien": "false"})))
 
 print()
 if echecs:

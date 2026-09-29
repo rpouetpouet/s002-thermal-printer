@@ -48,6 +48,25 @@ def parser_status(texte: str) -> dict:
     return champs
 
 
+def maintien_actif(etat_noeud: dict) -> bool:
+    """Vrai si le nœud dit qu'il garde la liaison."""
+    return str(etat_noeud.get("maintien", "")).lower() in ("oui", "true", "1")
+
+
+def faut_reappliquer(voulu: bool | None, etat_noeud: dict) -> bool:
+    """Vrai s'il faut renvoyer `MAINTENIR 1` au nœud.
+
+    Un redémarrage du nœud (OTA, coupure, BROWNOUT) le remet en libération automatique et efface le
+    maintien : l'intention de l'utilisateur est donc réappliquée après coup.
+
+    La règle est volontairement À SENS UNIQUE : on ne force jamais l'ARRÊT. D'une part l'arrêt est
+    l'état par défaut (rien à rétablir), d'autre part forcer un arrêt viendrait contredire une
+    activation faite ailleurs — et le bouton « Libérer le Bluetooth », qui rend la liaison à un
+    téléphone, est justement le cas où l'intention devient « ne plus maintenir ».
+    """
+    return voulu is True and not maintien_actif(etat_noeud)
+
+
 def octets(trame: str) -> list[str]:
     """Découpe la trame hexadécimale en octets, en ignorant les espaces multiples."""
     return str(trame or "").split()

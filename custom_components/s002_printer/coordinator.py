@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .ble import S002Error
 from .const import DOMAIN, NODE_STATUT_INTERVALLE_S
 from .printer import S002Printer
+from .trame import faut_reappliquer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +34,11 @@ class S002Coordinator(DataUpdateCoordinator[dict]):
         )
         self.entry = entry
         self.imprimante = imprimante
+        #: Dernière intention de l'utilisateur sur le maintien de liaison (None = jamais exprimée).
+        #: L'interrupteur lit son ÉTAT sur le nœud, donc HA n'a aucun souvenir par lui-même : sans
+        #: cette intention, un redémarrage du nœud perd le maintien sans que personne ne s'en
+        #: aperçoive. Elle est restaurée au démarrage de HA par l'interrupteur (`RestoreEntity`).
+        self.voulu_maintien: bool | None = None
 
     async def _async_update_data(self) -> dict:
         """Une interrogation du nœud. Lève UpdateFailed pour laisser l'entité « indisponible ».
@@ -42,6 +48,17 @@ class S002Coordinator(DataUpdateCoordinator[dict]):
         une absence de donnée doit se VOIR).
         """
         try:
-            return await self.imprimante.etat_noeud()
+            etat = await self.imprimante.etat_noeud()
         except S002Error as err:
             raise UpdateFailed(str(err)) from err
+
+        # Le nœud a-t-il perdu le maintien (redémarrage, OTA, BROWNOUT) alors que l'utilisateur
+        # l'avait demandé ? On le rétablit, puis on RELIT pour que les entités montrent la vérité.
+        if faut_reappliquer(self.voulu_maintien, etat):
+            _LOGGER.info("Le nœud ne maintient plus la liaison : rétablissement demandé")
+            try:
+                await self.imprimante.maintenir_liaison(True)
+                etat = await self.imprimante.etat_noeud()
+            except S002Error as err:
+                _LOGGER.warning("Rétablissement du maintien impossible : %s", err)
+        return etat
