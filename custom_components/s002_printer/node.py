@@ -170,16 +170,9 @@ class S002NodeTransport:
         pas une preuve d'impression : seule la trame d'état de l'imprimante l'est.
         """
         brut = await self._commande("STATUS")
-        champs: dict[str, object] = {}
-        for morceau in brut.split():
-            if "=" not in morceau:
-                continue
-            cle, valeur = morceau.split("=", 1)
-            try:
-                champs[cle] = int(valeur)
-            except ValueError:
-                champs[cle] = valeur
-        if not champs:
-            raise S002Error(f"réponse de STATUT illisible : {brut!r}")
-        champs["brut"] = brut
-        return champs
+        from .trame import parser_status
+
+        try:
+            return parser_status(brut)
+        except ValueError as err:
+            raise S002Error(str(err)) from err

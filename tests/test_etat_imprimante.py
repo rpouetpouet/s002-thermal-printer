@@ -12,13 +12,29 @@ sys.path.insert(
     0,
     str(pathlib.Path(__file__).resolve().parent.parent / "custom_components" / "s002_printer"),
 )
-from trame import BIT_REFUS, OCTET_REFUS, batterie, octets, refus_impression  # noqa: E402
+from trame import (  # noqa: E402
+    BIT_REFUS,
+    OCTET_REFUS,
+    batterie,
+    octets,
+    parser_status,
+    refus_impression,
+)
 
 AVEC_PAPIER = "64 ff 0e 08 00 e1 07 03 90 09 03 55 4a ba 5a 34 12 9b"
 SANS_PAPIER = "64 ff 0e 08 00 24 08 0b 88 09 03 55 49 ba 5a 34 12 9b"
 PAPIER_REMIS = "64 ff 0e 08 00 4f 08 03 90 09 03 55 64 ba 5a 34 12 9b"
 
 echecs = []
+
+
+def _leve(texte):
+    """Vrai si parser_status refuse bien une reponse sans aucune cle=valeur."""
+    try:
+        parser_status(texte)
+    except ValueError:
+        return True
+    return False
 
 
 def verifier(quoi, condition, detail=""):
@@ -63,6 +79,31 @@ print("la batterie se lit dans le meme charge (octet 12), regle identique au noe
 verifier("74 % sur la trame avec papier", batterie(AVEC_PAPIER) == 74, str(batterie(AVEC_PAPIER)))
 verifier("100 % sur la trame papier remis", batterie(PAPIER_REMIS) == 100, str(batterie(PAPIER_REMIS)))
 verifier("0x00 -> None (jamais recue)", batterie("64 ff 0e 08 00 e1 07 03 90 09 03 55 00") is None)
+
+print()
+print("le parseur du STATUS, sur une ligne reelle du noeud")
+LIGNE_REELLE = (
+    "reset=logiciel uptime=558s etat=pret liaison=tenue mode=manuel maintien=oui batterie=100 "
+    "etats=53 partition=ota_1 inactif=13s liberation=120s paquets=11 autorises=29 credits=3 "
+    "attentes=0 timeouts=0 ecritures=3 annonces=99 rssi=-16 memoire=105448 refus=2 "
+    "trou_max=216989ms trou_max_a=11 creux=6 brut=64 ff 36 08 00 4a 08 03 90 09 03 55 64 5e 5a 34 12 9b"
+)
+c = parser_status(LIGNE_REELLE)
+verifier("la trame brute fait bien 18 octets", len(octets(c["brut"])) == 18, str(len(octets(c["brut"]))))
+verifier("elle commence par 64 et finit par 9b", octets(c["brut"])[0] == "64" and octets(c["brut"])[-1] == "9b")
+verifier("les espaces de la valeur ne sont pas perdus", c["brut"] == LIGNE_REELLE.split("brut=", 1)[1].strip(),
+         repr(c["brut"])[:60])
+verifier("le champ suivant l'absorption est intact", c["brut"].count(" ") == 17, str(c["brut"].count(" ")))
+verifier("lecture bout en bout : pas de refus sur cette capture", refus_impression(c["brut"]) is False,
+         str(refus_impression(c["brut"])))
+verifier("lecture bout en bout : batterie 100 %", batterie(c["brut"]) == 100, str(batterie(c["brut"])))
+verifier("la reponse complete reste disponible", c["reponse_brute"] == LIGNE_REELLE)
+verifier("les entiers restent des entiers", c["creux"] == 6 and c["paquets"] == 11, f"{c['creux']} {c['paquets']}")
+verifier("les negatifs aussi (rssi)", c["rssi"] == -16, str(c["rssi"]))
+verifier("les valeurs texte aussi", c["partition"] == "ota_1" and c["etat"] == "pret")
+verifier("une reponse illisible leve une erreur",
+         (lambda: (parser_status("rien du tout"), False)[1] if False else _leve("rien du tout"))(),
+         "pas d'erreur")
 
 print()
 if echecs:

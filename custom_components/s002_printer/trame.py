@@ -17,6 +17,37 @@ OCTET_REFUS = 7
 BIT_REFUS = 0x08
 
 
+def parser_status(texte: str) -> dict:
+    """Transforme la réponse du nœud en dictionnaire clé/valeur.
+
+    Deux pièges, tous deux rencontrés le 29/09/2026 :
+
+    - une valeur peut contenir des ESPACES (la trame d'état, par exemple : `brut=64 ff 0e …`).
+      Un mot sans `=` n'est donc pas à jeter : c'est la suite de la valeur précédente ;
+    - la clé `brut` désignait auparavant la réponse ENTIÈRE, attribuée en fin de boucle : elle
+      écrasait la trame. La réponse complète est désormais sous `reponse_brute`.
+
+    Sans ces deux corrections, `brut` se réduisait à `64` puis à la ligne entière, et toute
+    lecture d'octet tombait au mauvais endroit.
+    """
+    champs: dict[str, object] = {}
+    derniere_cle: str | None = None
+    for morceau in str(texte or "").split():
+        if "=" not in morceau:
+            if derniere_cle:
+                champs[derniere_cle] = f"{champs[derniere_cle]} {morceau}"
+            continue
+        derniere_cle, valeur = morceau.split("=", 1)
+        try:
+            champs[derniere_cle] = int(valeur)
+        except ValueError:
+            champs[derniere_cle] = valeur
+    if not champs:
+        raise ValueError(f"réponse de STATUT illisible : {texte!r}")
+    champs["reponse_brute"] = str(texte or "").strip()
+    return champs
+
+
 def octets(trame: str) -> list[str]:
     """Découpe la trame hexadécimale en octets, en ignorant les espaces multiples."""
     return str(trame or "").split()
