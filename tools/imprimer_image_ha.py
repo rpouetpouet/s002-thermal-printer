@@ -4,8 +4,12 @@
 Passe par l'intégration, donc par les réglages publiés (préparation + gamma 0.85 + tramage), et
 vérifie la cohérence entre ce que HA annonce et ce que le nœud a réellement écrit sur le papier.
 
-Usage : imprimer_image_ha.py <fichier> [--grand]
-        --grand : imprime la photo tournée d'un quart de tour (1,8x plus de points par pixel)
+Usage : imprimer_image_ha.py <fichier> [--grand] [--gamma 0.85]
+        --grand : tourne l'image d'un quart de tour, elle occupe alors la LONGUEUR du rouleau
+        --gamma : densité (< 1 = plus clair, > 1 = plus sombre). Défaut de l'intégration : 0,85.
+        --brut  : envoie l'image telle quelle (enhance=false). À utiliser quand les tons ont été
+                  réglés en amont : l'étalement automatique renormalise min/max, donc il annule
+                  toute correction préalable.
 """
 from __future__ import annotations
 
@@ -20,6 +24,10 @@ import urllib.request
 
 FICHIER = pathlib.Path(sys.argv[1])
 GRAND = "--grand" in sys.argv
+GAMMA = None
+if "--gamma" in sys.argv:
+    GAMMA = float(sys.argv[sys.argv.index("--gamma") + 1])
+BRUT = "--brut" in sys.argv
 
 
 def env(cle: str) -> str:
@@ -85,9 +93,19 @@ avant = noeud()
 print(f"  AVANT : liaison={avant.get('liaison')} batterie={avant.get('batterie')} "
       f"uptime={avant.get('uptime')} ecritures={avant.get('ecritures')} reset={avant.get('reset')}")
 
+donnees_service = {"image": base64.b64encode(donnees).decode()}
+if BRUT:
+    donnees_service["enhance"] = False
+    donnees_service["gamma"] = 1.0
+    print("  mode BRUT : tons regles en amont, etalement et gamma de l'integration desactives")
+if GAMMA is not None:
+    donnees_service["gamma"] = GAMMA
+    print(f"  densité demandée : gamma {GAMMA} "
+          f"({'plus clair' if GAMMA < 0.85 else 'plus sombre'} que le défaut 0,85)")
+
 requete = urllib.request.Request(
     env("HASS_URL") + "/api/services/s002_printer/print_image?return_response=true",
-    data=json.dumps({"image": base64.b64encode(donnees).decode()}).encode(),
+    data=json.dumps(donnees_service).encode(),
     headers={"Authorization": "Bearer " + env("HASS_TOKEN"), "Content-Type": "application/json"},
     method="POST",
 )

@@ -92,6 +92,15 @@ PRINT_IMAGE_SCHEMA = SERVICE_BASE_SCHEMA.extend(
         vol.Required("image"): cv.string,
         vol.Optional("dither", default=False): cv.boolean,
         vol.Optional("invert", default=False): cv.boolean,
+        # ⚠️ `enhance` et `gamma` étaient lus par le gestionnaire du service et documentés dans
+        # services.yaml, mais ABSENTS de ce schéma : Home Assistant rejetait donc tout appel qui
+        # les utilisait, avec un 400 Bad Request. Une option documentée mais non déclarée ici est
+        # inutilisable — c'est le schéma qui valide, pas la documentation. Le test
+        # `test_schema_formulaire.py` vérifie maintenant que chaque option documentée est acceptée.
+        vol.Optional("enhance", default=True): cv.boolean,
+        vol.Optional("gamma", default=0.85): vol.All(
+            vol.Coerce(float), vol.Range(min=0.3, max=2.0)
+        ),
     }
 )
 
