@@ -72,6 +72,8 @@ static const char *TAG = "s002";
 #define SETTLE_AFTER_WIDTH_MS 400
 #define WRITE_TIMEOUT_MS 3000
 #define TOLERANCE_MS 400        /* tolérance de pause mesurée de l'imprimante */
+#define TROU_TACHE_MS 400       /* silence qui fait fermer la tâche (bande blanche) */
+#define WRITE_TENTATIVES 3      /* essais par paquet avant d'admettre l'échec */
 
 /* Contrôle de flux par crédits — MÊME mécanisme que l'intégration HA (ble.py), mais en
  * COMPTABILISANT les paquets au lieu d'attendre à intervalle fixe.
@@ -105,6 +107,17 @@ static SemaphoreHandle_t s_write_done;  /* libéré UNIQUEMENT par la fin d'une 
 static int64_t s_t0;
 static int64_t s_worst_us, s_best_us = INT64_MAX, s_total_us;
 static uint32_t s_write_count, s_write_timeouts;
+
+/** Remet a zero les mesures de silence. Appele au DEBUT de chaque flux d'impression : sans
+ *  cela, le silence entre deux impressions (plusieurs secondes) ecraserait le vrai maximum
+ *  interne et ferait croire a un trou au milieu de l'image. */
+void s002_debut_impression(void);
+static uint32_t s_refus;                 /* paquets definitivement refuses (apres tentatives) */
+static volatile int s_dernier_refus;     /* statut du dernier write_cb, lu par ble_write_block */
+static volatile int64_t s_fin_us;        /* fin de la derniere ecriture : mesure du silence */
+static int64_t s_trou_max_us;            /* plus long silence entre deux ecritures */
+static uint32_t s_trou_max_a;            /* a quelle ecriture ce silence est tombe */
+static uint32_t s_trous_400;             /* silences >= 400 ms : l'imprimante ferme la tache */
 static uint32_t s_notify_rx;
 
 /* Découverte séquentielle */
@@ -217,6 +230,14 @@ static uint32_t s_noms_journalises;
 /* --------------------------------------------------------------------------------------
  * Statistiques d'écriture
  * -------------------------------------------------------------------------------------- */
+void s002_debut_impression(void)
+{
+    s_fin_us = 0;
+    s_trou_max_us = 0;
+    s_trou_max_a = 0;
+    s_trous_400 = 0;
+}
+
 static void stats_add(int64_t duree_us)
 {
     s_write_count++;
@@ -284,9 +305,14 @@ static int write_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
     (void)attr;
     (void)arg;
     int64_t duree = esp_timer_get_time() - s_t0;
+    s_fin_us = esp_timer_get_time();
     if (error->status == 0) {
         stats_add(duree);
     } else {
+        /* Un refus n'est PAS une ecriture reussie : l'appelant doit pouvoir reessayer, et
+         * ce compteur rend le refus visible dans le STATUS (avant, il n'existait que dans le
+         * journal, ce qui a fait passer une perte de donnees pour un regroupement). */
+        s_dernier_refus = error->status;
         ESP_LOGE(TAG, "  ecriture REFUSEE : status=%d", error->status);
     }
     xSemaphoreGive(s_write_done);
@@ -340,17 +366,50 @@ static bool ble_write_block(uint16_t handle, const uint8_t *data, size_t len, bo
     size_t offset = 0;
     while (offset < len) {
         size_t n = (len - offset) > CHUNK_SIZE ? CHUNK_SIZE : (len - offset);
-        s_t0 = esp_timer_get_time();
-        int rc = ble_gattc_write_flat(s_conn_handle, handle, data + offset, n,
-                                      mesurer ? write_cb : NULL, NULL);
-        if (rc != 0) {
-            ESP_LOGE(TAG, "  ble_gattc_write_flat refuse : rc=%d", rc);
-            return false;
+        bool ecrit = false;
+        for (int essai = 1; essai <= WRITE_TENTATIVES && !ecrit; essai++) {
+            /* Le silence qui compte pour l'imprimante est celui qui separe deux ecritures :
+             * au-dela de TROU_TACHE_MS elle ferme la tache en cours et avance le papier, ce
+             * qui produit une bande blanche au milieu d'une image. On le mesure ici, avant
+             * chaque tentative, pour pouvoir le lire dans le STATUS apres coup. */
+            const int64_t maintenant = esp_timer_get_time();
+            if (s_fin_us != 0) {
+                const int64_t trou = maintenant - s_fin_us;
+                if (trou > s_trou_max_us) {
+                    s_trou_max_us = trou;
+                    s_trou_max_a = s_paquets;
+                }
+                if (trou >= (int64_t)TROU_TACHE_MS * 1000) {
+                    s_trous_400++;
+                    ESP_LOGW(TAG, "  trou de %.1f ms entre deux ecritures", trou / 1000.0);
+                }
+            }
+            s_dernier_refus = 0;
+            s_t0 = esp_timer_get_time();
+            int rc = ble_gattc_write_flat(s_conn_handle, handle, data + offset, n,
+                                          mesurer ? write_cb : NULL, NULL);
+            if (rc != 0) {
+                ESP_LOGE(TAG, "  ble_gattc_write_flat refuse : rc=%d (essai %d/%d)",
+                         rc, essai, WRITE_TENTATIVES);
+            } else if (mesurer &&
+                       xSemaphoreTake(s_write_done, pdMS_TO_TICKS(WRITE_TIMEOUT_MS)) != pdTRUE) {
+                s_write_timeouts++;
+                ESP_LOGE(TAG, "  TIMEOUT d'ecriture (> %d ms) — lien BLE perdu ?", WRITE_TIMEOUT_MS);
+                return false;
+            } else if (s_dernier_refus != 0) {
+                ESP_LOGW(TAG, "  paquet refuse (status=%d) : tentative %d/%d",
+                         s_dernier_refus, essai, WRITE_TENTATIVES);
+            } else {
+                ecrit = true;
+            }
+            if (!ecrit) {
+                vTaskDelay(pdMS_TO_TICKS(20 * essai));
+            }
         }
-        if (mesurer &&
-            xSemaphoreTake(s_write_done, pdMS_TO_TICKS(WRITE_TIMEOUT_MS)) != pdTRUE) {
-            s_write_timeouts++;
-            ESP_LOGE(TAG, "  TIMEOUT d'ecriture (> %d ms) — lien BLE perdu ?", WRITE_TIMEOUT_MS);
+        if (!ecrit) {
+            s_refus++;
+            ESP_LOGE(TAG, "  paquet PERDU apres %d tentatives — ce trou ira sur le papier",
+                     WRITE_TENTATIVES);
             return false;
         }
         if (!mesurer) {
@@ -1397,7 +1456,8 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
             reponse, taille,
             "reset=%s uptime=%us etat=%s liaison=%s mode=%s maintien=%s batterie=%d etats=%u "
             "partition=%s inactif=%llds liberation=%ds paquets=%d autorises=%d credits=%d "
-            "attentes=%d timeouts=%d ecritures=%u annonces=%u rssi=%d memoire=%u",
+            "attentes=%d timeouts=%d ecritures=%u annonces=%u rssi=%d memoire=%u "
+                 "refus=%u trou_max=%dms trou_max_a=%u creux=%u",
             raison_redemarrage(), (unsigned)(esp_timer_get_time() / 1000000),
             s_pret_a_imprimer ? "pret" : "attente",
             s_conn_handle != BLE_HS_CONN_HANDLE_NONE ? "tenue" : "libre",
@@ -1407,7 +1467,9 @@ static void tcp_commande(const char *commande, char *reponse, size_t taille)
             (long long)(inactif_us / 1000000), s_liberation_auto_s, s_paquets,
             s_paquets_autorises, s_credits, s_flux_attentes, s_flux_timeouts,
             (unsigned)s_write_count, (unsigned)s_adv_vus, s_rssi_max,
-            (unsigned)esp_get_free_heap_size());
+            (unsigned)esp_get_free_heap_size(),
+            (unsigned)s_refus, (int)(s_trou_max_us / 1000), (unsigned)s_trou_max_a,
+            (unsigned)s_trous_400);
         /* Une troncature muette a coute des heures de diagnostic : elle devient bruyante. */
         if (ecrits < 0 || (size_t)ecrits >= taille) {
             ESP_LOGW(TAG, "STATUS tronque : %d octets necessaires, tampon de %u",

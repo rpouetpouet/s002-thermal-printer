@@ -22,6 +22,9 @@ typedef int (*s002_ota_cb_t)(int fd, size_t octets);
 
 /* Demarre le serveur. Retourne ESP_OK, ou une erreur si l'ouverture du socket echoue.
  * Cree sa propre tache FreeRTOS. Ne bloque pas. */
+/** Remise a zero des mesures de silence, au debut d'un flux d'impression. */
+void s002_debut_impression(void);
+
 esp_err_t serveur_tcp_demarrer(uint16_t port,
                                s002_reception_cb_t reception,
                                s002_commande_cb_t commande,

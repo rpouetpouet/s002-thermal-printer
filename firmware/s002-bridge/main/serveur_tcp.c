@@ -136,6 +136,9 @@ static void traiter_client(int fd)
         if (premier_bloc) {
             binaire = (tampon[0] == PREMIER_OCTET_TRAME);
             premier_bloc = false;
+            if (binaire) {
+                s002_debut_impression();   /* les mesures de silence valent pour CETTE impression */
+            }
             ESP_LOGI(TAG, "flux %s", binaire ? "BINAIRE (trames YK)" : "TEXTUEL (commandes)");
         }
 
@@ -144,7 +147,12 @@ static void traiter_client(int fd)
              * est donc toujours une suite entiere de trames, jamais une trame tronquee. */
             s_blocs++;
             if (!s_reception(tampon, (size_t)n)) {
-                ESP_LOGW(TAG, "bloc de %d octets REFUSE par le pont BLE", n);
+                /* Ecriture definitivement refusee (apres tentatives) : la suite du flux ne peut
+                 * plus rien rattraper, l'imprimante fermera la tache et le papier portera un
+                 * trou. On COUPE le flux pour que le client voie l'echec au lieu de croire
+                 * l'impression terminee sur un rapport sans erreur. */
+                ESP_LOGE(TAG, "bloc de %d octets REFUSE par le pont BLE — flux interrompu", n);
+                break;
             }
             continue;
         }
